@@ -1,0 +1,299 @@
+# kc-env messages — English (source language).
+# Placeholders use Go templates: {{.Name}}. Plural messages have "one"/"other".
+# Every ID here must also exist in each other locale (enforced by tests).
+
+help = '''
+kc-env {{.Version}} — secrets in profiles, protected by a Secure Enclave key (Touch ID)
+(age {{.AgeVersion}}, language: {{.Lang}}; set KC_ENV_LANG, LC_ALL, LC_MESSAGES or LANG to change)
+
+Usage:
+  kc-env <command> [args...]
+
+Listing (no Touch ID: only the key-name index is read, never values)
+  list [<profile>]              all profiles and key names as a tree (alias: tree)
+  profiles                      profile names, one per line
+  ls <profile>                  key names of a profile
+  ls --verify <profile>         decrypt to check the key names and rebuild the index (Touch ID)
+
+Values
+  set <profile> <KEY>           add or replace a value. The value is read from (in order):
+                                  1. a hidden prompt on a terminal
+                                  2. standard input    e.g. pbpaste | kc-env set work GITHUB_TOKEN
+                                  3. a hidden dialog when neither is available
+                                Setting a key in an existing profile needs Touch ID
+  get <profile> <KEY>           print a value (Touch ID)
+                                Avoid it where output is recorded (logs, chat transcripts)
+  exec <profile> -- <cmd...>    run cmd with the profile's keys as environment variables (one Touch ID)
+                                Values reach only cmd's process, never your shell
+                                e.g. kc-env exec work -- gh repo list
+  header <profile> <KEY> [--name <Header>] [--prefix <text>]
+                                print an HTTP header as JSON (Touch ID). Default:
+                                {"Authorization":"Bearer <value>"}. For tools that take headers
+                                as JSON from a command. --prefix '' for no prefix
+                                e.g. kc-env header work API_TOKEN --name X-Api-Key --prefix ''
+
+Deleting (always Touch ID with the Secure Enclave key, even inside a session)
+  rm <profile> <KEY> [<KEY>...] remove keys. Nothing is removed if any key is missing
+  rm --all <profile>            remove every key, keep the empty profile (asks first)
+  rm-profile <profile>          remove an empty profile (asks first). Refuses while keys remain
+  rm-profile --force <profile>  remove a profile and its keys (asks first; cannot be undone)
+  Questions use y/N on a terminal, otherwise a dialog (default: cancel)
+
+Wiping everything (e.g. before erasing the Mac)
+  destroy                       delete the Secure Enclave key and every secret. Cannot be undone
+                                deletes: identity.txt, vault/, run/
+                                keeps:   bin/, completions/ (kc-env init starts over)
+                                steps: list what is lost, y/N, type a phrase, 10 s countdown,
+                                       Touch ID (never a session), delete and verify
+                                Runs only from an interactive terminal (not from pipes, dialogs,
+                                non-interactive tools, or inside a session)
+
+Sessions (skip Touch ID for a while)
+  session [--ttl 30m] [--only p1,p2] [-- <cmd...>]
+                                start cmd (default: your shell) in a session. Each profile asks
+                                for Touch ID on its first decryption only
+                                  --ttl   lifetime (e.g. 15m, 1h, 2h; default 30m, at most 24h)
+                                  --only  profiles that may be cached (others always ask)
+                                e.g. kc-env session --only work -- zsh
+  session status                same as `cache`
+  lock                          drop this session's cache (the next use asks again)
+
+  How it works: the `kc-env session` process keeps the decrypted profiles in its own memory.
+  Nothing is written to disk and no key is put in the environment (KC_ENV_SESSION is only the
+  session ID). kc-env asks that process over a socket under run/, and it answers only
+  processes started under cmd, as seen in the kernel's process table. It enforces the TTL and
+  --only itself and forgets everything when cmd exits or the TTL passes. Parallel requests
+  (e.g. several commands starting at once) share one Touch ID. Caution: every program started
+  under cmd can read the cached values without asking — including any tool or agent started
+  in it. Keep --only narrow and the TTL short.
+
+Session caches
+  cache                         this session: ID, command, expiry, scope, cached profiles
+  cache list                    every running session on this Mac (* = this session)
+                                Only metadata is shown; another session's values cannot be read
+  cache rm <ID>...              end sessions (Touch ID; at least 4 characters of the ID)
+  cache rm --current            end this session (Touch ID)
+  cache rm --all                end every session (Touch ID)
+                                An ended session asks for Touch ID every time until its command
+                                exits (`lock` only clears this session's cache, without Touch ID)
+
+Setup
+  init                          create the Secure Enclave key (once)
+  help, -h, --help              this help
+  version                       version
+
+Names
+  profile   starts with a letter or digit; letters, digits and . _ -   e.g. work, personal, stg.work
+  KEY       starts with a letter or _; letters, digits and _ (a valid environment variable name)
+            Names that change how programs start are refused (PATH, HOME, DYLD_*, LD_*,
+            KC_ENV_*, NODE_OPTIONS, BASH_ENV, ...)
+
+Authentication
+  Every decryption asks for Touch ID, or the macOS login password when Touch ID is unavailable.
+  The key lives in the Secure Enclave and cannot leave this Mac. If you lose the Mac, the vault
+  cannot be decrypted: reissue your API keys and register them again.
+
+Files (paths used by this invocation)
+  program      {{.Self}}
+  home         {{.Home}}
+  key ref      {{.Identity}}
+  sessions     {{.Sessions}}   (sockets of running sessions; no secrets on disk)
+  vault        {{.Vault}}
+                 <profile>.age   ciphertext (lines of KEY=base64(value))
+                 <profile>.keys  key-name index (plaintext, no values)
+  completion   {{.Completion}}
+                 add its directory to fpath in ~/.zshrc before compinit / oh-my-zsh
+  plugin       {{.Plugin}}
+               (<home>/bin first, then the absolute directories of PATH)
+  kc-env stops if any of these is owned by someone else or writable by group or others.
+
+Moving the home
+  Move the whole home (bin/, identity.txt, vault/ ...). The home is always "the directory
+  above the program", so no configuration changes are needed, and identity.txt does not
+  depend on its path. Only re-create the PATH symlink:
+    ln -sf <new home>/bin/kc-env ~/.local/bin/kc-env'''
+
+help_plugin_missing = "(not found in <home>/bin or on PATH)"
+word_not_found = "(not found)"
+word_all = "all"
+word_expired = "expired"
+word_none = "none"
+word_none_yet = "(none yet)"
+
+# ---- errors ----
+err_unknown_command = "unknown command: {{.Cmd}} (see: kc-env help)"
+err_invalid_profile = "invalid profile name: {{.Name}}"
+err_invalid_key = "invalid key name: {{.Name}}"
+err_unsafe_key = "key name {{.Name}} is refused: it changes how programs start (PATH, HOME, DYLD_*, LD_*, KC_ENV_*, NODE_OPTIONS, ...)"
+err_unsafe_key_in_profile = "profile {{.Name}} holds the refused key name {{.Key}}; it will not be handed to commands. Remove it with: kc-env rm {{.Name}} {{.Key}}"
+err_value_nul = "the value contains a NUL byte, which an environment variable cannot hold"
+err_bad_identity = "{{.Path}} must hold exactly one Secure Enclave key (AGE-PLUGIN-SE-1...) of this Mac"
+err_unsafe_perms = "unsafe permissions: {{.Path}} must be owned by you and not writable by group or others"
+err_socket_path = "the session socket path is too long: {{.Path}} (move the home to a shorter path)"
+err_session_unreachable = "the session did not answer"
+err_not_initialized = "not initialized ({{.Home}}); run: kc-env init"
+err_no_profile = "no such profile: {{.Name}} (see: kc-env list)"
+err_no_key = "no such key: {{.Profile}}/{{.Key}}"
+err_no_key_nothing_removed = "no such key: {{.Profile}}/{{.Key}} (nothing removed)"
+err_plugin_input = "the age plugin asked for input, which kc-env does not support: {{.Prompt}}"
+err_decrypt_failed = "decryption failed or was cancelled"
+err_encrypt_failed = "encryption failed"
+err_corrupt_profile = "corrupt entry in profile {{.Name}}"
+err_no_value = "no value"
+err_empty_value = "empty value"
+err_cancelled = "cancelled"
+err_aborted = "aborted"
+err_already_initialized = "already initialized ({{.Path}})"
+err_plugin_missing = "age-plugin-se not found in <home>/bin or on PATH"
+err_keygen_failed = "key generation failed"
+err_option_value = "{{.Opt}} needs a value"
+err_command_not_found = "command not found: {{.Cmd}}"
+err_in_session = "already inside a kc-env session (see: kc-env cache)"
+err_invalid_ttl = "invalid --ttl: {{.Value}} (e.g. 30m, 1h; at most 24h)"
+err_outside_session = "this shell is not inside a session"
+err_invalid_id = "invalid ID: {{.ID}}"
+err_id_matches = "ID '{{.ID}}' matches {{.Count}} sessions (see: kc-env cache list)"
+err_auth_failed_nothing = "authentication failed; nothing was deleted"
+err_rm_profile_no_index = "profile '{{.Name}}' has no key index, so it may still hold keys. Check with: kc-env ls --verify {{.Name}}  (or use --force)"
+hint_rm_profile = "remove them first (kc-env rm --all {{.Name}}), or delete everything with: kc-env rm-profile --force {{.Name}}"
+err_destroy_tty = "run destroy directly in a terminal (not from pipes, dialogs or other programs)"
+err_destroy_session = "destroy cannot run inside a kc-env session; use a terminal outside the session"
+err_destroy_home = "cannot confirm the home directory ({{.Home}}); aborting"
+err_destroy_nothing = "no key found ({{.Path}}); nothing to delete"
+err_phrase_mismatch = "the text does not match; aborting (nothing was deleted)"
+err_destroy_left = """could not delete:
+{{.Paths}}"""
+
+err_rm_profile_has_keys = { one = "profile '{{.Name}}' still holds {{.Count}} key:", other = "profile '{{.Name}}' still holds {{.Count}} keys:" }
+
+# ---- usage ----
+usage_ls = "usage: kc-env ls [--verify] <profile>"
+usage_set = "usage: kc-env set <profile> <KEY>"
+usage_get = "usage: kc-env get <profile> <KEY>"
+usage_header = "usage: kc-env header <profile> <KEY> [--name <Header>] [--prefix <text>]"
+usage_exec = "usage: kc-env exec <profile> -- <command...>"
+usage_rm = "usage: kc-env rm <profile> <KEY> [<KEY>...]  or  kc-env rm --all <profile>"
+usage_rm_all = "usage: kc-env rm --all <profile>  (no key names with --all)"
+usage_rm_profile = "usage: kc-env rm-profile [--force] <profile>"
+usage_cache = "usage: kc-env cache [info | list | rm <ID>... | rm --current | rm --all]"
+usage_cache_rm = "usage: kc-env cache rm <ID>... | --current | --all   (IDs: kc-env cache list)"
+usage_destroy = "usage: kc-env destroy   (no options; it always asks)"
+
+# ---- prompts / dialogs ----
+prompt_value = "Value for {{.Label}}: "
+dialog_value = "Value for {{.Label}}"
+button_cancel = "Cancel"
+button_delete = "Delete"
+prompt_auth = "Confirm with Touch ID (or your password)"
+msg_waiting_auth = "waiting for Touch ID / password..."
+confirm_rm_all = "Delete all {{.Count}} keys in profile '{{.Name}}'? (the empty profile is kept)"
+confirm_rm_empty_profile = "Delete empty profile '{{.Name}}'?"
+confirm_rm_profile_force = "Delete profile '{{.Name}}' AND its {{.Count}} key(s)? This cannot be undone."
+
+# ---- results ----
+msg_initialized = "initialized: {{.Home}}"
+msg_set = "set {{.Profile}}/{{.Key}}"
+msg_removed_key = "removed {{.Profile}}/{{.Key}}"
+msg_removed_all = "removed all keys in {{.Name}}"
+msg_removed_profile = "removed profile {{.Name}}"
+msg_no_profiles = "(no profiles yet: kc-env set <profile> <KEY>)"
+msg_session_started = "session started (expires {{.Expires}}, scope {{.Scope}}). The cache is kept in memory only and ends with the command"
+msg_no_session = "no active session"
+msg_locked = "session cache cleared (the next use asks for Touch ID again)"
+
+msg_cache_removed = { one = "ended {{.Count}} session (it asks for Touch ID every time from now on)", other = "ended {{.Count}} sessions (they ask for Touch ID every time from now on)" }
+
+list_profile = { one = "{{.Name}}  ({{.Count}} key, updated {{.Updated}})", other = "{{.Name}}  ({{.Count}} keys, updated {{.Updated}})" }
+
+list_no_index = "{{.Name}}  (no index, updated {{.Updated}})"
+list_no_index_hint = "? create it with: kc-env ls --verify {{.Name}}"
+
+# ---- sessions / caches ----
+remaining_minutes = { one = "{{.Count}} min left", other = "{{.Count}} min left" }
+
+cache_outside = """kc-env cache: this shell is outside any session (every decryption asks for Touch ID)
+  other sessions: kc-env cache list"""
+cache_info = '''kc-env cache: this session
+  ID          {{.ID}}
+  command     {{.Cmd}}
+  started     {{.Start}}
+  expires     {{.Expires}} ({{.Remaining}})
+  scope       {{.Scope}}
+  cached      {{.Cached}}
+  end it: kc-env cache rm --current (Touch ID)'''
+cache_none = "kc-env cache: no running sessions"
+cache_list_footer = """  * = this session
+  end: kc-env cache rm <ID>... | --current | --all (Touch ID)"""
+cache_nothing_to_remove = "kc-env cache: no session to end"
+cache_rm_header = "Ending these sessions (their caches are wiped):"
+cache_rm_item = "{{.ID}}  {{.Cmd}}  scope {{.Scope}}  cached {{.Cached}}"
+col_id = "ID"
+col_started = "started"
+col_expires = "expires"
+col_cmd = "command"
+col_scope = "scope"
+col_cached = "cached"
+
+# ---- destroy ----
+destroy_banner = "  ██  kc-env destroy — permanently delete the Secure Enclave key and every secret  ██"
+destroy_summary = '''  home        {{.Home}}
+  key         {{.Identity}}
+              {{.Created}}
+  profiles    {{.Profiles}} / keys {{.Keys}}{{.AtLeast}}'''
+destroy_at_least = " or more"
+destroy_scope = '''  deletes: identity.txt, vault/ (all profiles), run/ (sessions)
+  keeps:   bin/, completions/ (kc-env init starts over)
+
+  There is no way back. The key exists only in this Mac's Secure Enclave; once identity.txt
+  is gone, backups (Time Machine etc.) cannot be decrypted either.
+  Reissue the API keys at each service if you still need them.'''
+destroy_confirm = "Really delete everything?"
+destroy_type_phrase = "To confirm, type exactly:  {{.Phrase}}"
+destroy_countdown = "{{.Seconds}} s until Touch ID. Press Ctrl-C to abort ..."
+destroy_profile_unknown = "{{.Name}}  (key count unknown: no index)"
+destroy_done = "Deleted: the key, {{.Profiles}} profile(s), {{.Keys}} key(s). To start again: kc-env init"
+
+destroy_profile_line = { one = "{{.Name}}  ({{.Count}} key)", other = "{{.Name}}  ({{.Count}} keys)" }
+
+# ---- shell completion (static text, no placeholders) ----
+comp_cmd_list = "all profiles and key names as a tree (no Touch ID)"
+comp_cmd_tree = "alias of list"
+comp_cmd_profiles = "profile names"
+comp_cmd_ls = "key names of a profile"
+comp_cmd_set = "add or replace a key"
+comp_cmd_get = "print a value (Touch ID)"
+comp_cmd_header = "print an HTTP header as JSON (Touch ID)"
+comp_cmd_exec = "run a command with the keys as environment variables (Touch ID)"
+comp_cmd_rm = "remove keys (several allowed; --all for every key; Touch ID)"
+comp_cmd_rm_profile = "remove an empty profile (--force: with its keys; Touch ID)"
+comp_cmd_session = "start a command in a session that skips Touch ID for a while"
+comp_cmd_lock = "drop this session's cache"
+comp_cmd_cache = "inspect (info / list) and end (rm, Touch ID) sessions"
+comp_cmd_init = "create the Secure Enclave key (once)"
+comp_cmd_destroy = "delete the key and every secret (terminal only, Touch ID)"
+comp_cmd_help = "show help"
+comp_cmd_version = "show version"
+comp_opt_verify = "decrypt to check and rebuild the index (Touch ID)"
+comp_opt_force = "also delete the keys inside"
+comp_opt_all = "remove every key (keep the profile)"
+comp_opt_name = "header name (default Authorization)"
+comp_opt_prefix = "text before the value (default \"Bearer \")"
+comp_opt_ttl = "lifetime (default 30m, at most 24h)"
+comp_opt_only = "profiles that may be cached (comma separated)"
+comp_opt_dashdash = "the command to start follows (default: your shell)"
+comp_session_status = "show this session"
+comp_cache_info = "this session's cache"
+comp_cache_list = "every running session"
+comp_cache_rm = "end sessions (Touch ID)"
+comp_cache_current = "this session"
+comp_cache_all = "every session"
+comp_ttl_15m = "15 minutes"
+comp_ttl_30m = "30 minutes (default)"
+comp_ttl_1h = "1 hour"
+comp_ttl_2h = "2 hours"
+comp_tag_command = "kc-env command"
+comp_tag_profile = "profile"
+comp_tag_key = "key"
+comp_tag_cache = "session"
+comp_session_desc = "{{.Cmd}} scope {{.Scope}}"
+

@@ -1,0 +1,300 @@
+# kc-env のメッセージ — 日本語。
+# プレースホルダーは Go のテンプレート形式（{{.Name}}）。日本語は複数形がないので文字列だけでよい。
+# en.toml にある ID はすべてここにも必要（テストで確認している）。
+
+help = '''
+kc-env {{.Version}} — Secure Enclave（Touch ID）で保護したAPIキーをプロファイル単位で管理
+（age {{.AgeVersion}}、言語: {{.Lang}}。KC_ENV_LANG・LC_ALL・LC_MESSAGES・LANG で変更できます）
+
+使い方:
+  kc-env <コマンド> [引数...]
+
+一覧・確認（Touch ID 不要。キー名の索引を読むだけで、値は読みません）
+  list [<profile>]              全プロファイルとキー名をツリー表示（別名: tree）
+  profiles                      プロファイル名だけを1行ずつ表示
+  ls <profile>                  そのプロファイルのキー名を表示
+  ls --verify <profile>         実際に復号してキー名を確認し、索引を作り直す（Touch ID）
+
+値の操作
+  set <profile> <KEY>           追加または上書き。値の受け取り方（優先順）:
+                                  1. 端末なら非表示プロンプト
+                                  2. パイプなら標準入力   例: pbpaste | kc-env set work GITHUB_TOKEN
+                                  3. どちらもなければ伏せ字のダイアログ
+                                既存プロファイルへの set は復号を伴うため Touch ID が必要
+  get <profile> <KEY>           値を標準出力へ（Touch ID）
+                                ※ 出力が記録される場所（ログやチャットの履歴など）では使わない
+  exec <profile> -- <cmd...>    プロファイルのキーを環境変数にして cmd を実行（Touch ID 1回）
+                                値は cmd の子プロセスにだけ渡り、シェルには残りません
+                                例: kc-env exec work -- gh repo list
+  header <profile> <KEY> [--name <Header>] [--prefix <text>]
+                                HTTPヘッダーを JSON で出力（Touch ID）。既定は
+                                {"Authorization":"Bearer <値>"}。コマンドの出力からヘッダーを
+                                JSON で受け取るツール向け。--prefix '' で前置きなし
+                                例: kc-env header work API_TOKEN --name X-Api-Key --prefix ''
+
+削除（セッションの中でも、必ず Secure Enclave の鍵で Touch ID を求める）
+  rm <profile> <KEY> [<KEY>...] キーを削除（複数指定可）
+                                1つでも存在しないキーがあれば、何も消さずに止まる
+  rm --all <profile>            プロファイル内のキーをすべて削除。空のプロファイルは残る
+                                （先に確認あり）
+  rm-profile <profile>          空のプロファイルを削除（先に確認あり）
+                                キーが残っていると削除せずに止まる
+  rm-profile --force <profile>  プロファイルを中のキーごと削除（先に確認あり。元に戻せない）
+  ※ 確認は、端末なら y/N の入力、端末がなければダイアログ（既定はキャンセル）
+
+完全削除（PCの初期化前など）
+  destroy                       Secure Enclave の鍵とすべてのキーを削除する。元に戻せない
+                                消すもの: identity.txt, vault/, run/
+                                残すもの: bin/, completions/（kc-env init で再開できる）
+                                手順: 削除対象の一覧 → y/N → 指定文字列の入力 → 10秒待機
+                                      → Touch ID（セッションは使わない）→ 削除と確認
+                                端末から直接実行したときだけ動く（パイプ・ダイアログ・
+                                ほかのプログラム・セッション内からは実行できない）
+
+セッション（一定時間 Touch ID を省く）
+  session [--ttl 30m] [--only p1,p2] [-- <cmd...>]
+                                cmd（省略時はシェル）をセッション付きで起動する。セッション内では、
+                                各プロファイルの最初の復号だけ Touch ID を求め、以降は使い回す
+                                  --ttl   有効期限（例: 15m, 1h, 2h。既定 30m、最長 24h）
+                                  --only  キャッシュを許すプロファイル（それ以外は毎回 Touch ID）
+                                例: kc-env session --only work -- zsh
+  session status                cache と同じ（今のセッションの情報）
+  lock                          今のセッションのキャッシュを消す（次の利用で再び Touch ID）
+
+  仕組み: 復号した内容は kc-env session のプロセスが自分のメモリにだけ持つ。ディスクには
+  書かず、環境変数にも鍵を入れない（KC_ENV_SESSION はセッションの ID だけ）。
+  kc-env は run/ のソケット経由でそのプロセスに問い合わせる。応答するのは、カーネルの
+  プロセス表で cmd の配下だと確認できたプロセスだけ。期限と --only もそのプロセスが管理し、
+  cmd の終了時か期限切れですべて消す。
+  同時に複数の要求が来ても（複数のコマンドが一斉に起動したときなど）Touch ID は1回で済む。
+  注意: cmd の配下で起動したプログラムは、どれも Touch ID なしで値を読める。
+  セッションで起動したツールやエージェントも、あなたの確認なしに鍵を使えるようになる。
+  必要なプロファイルだけ --only で許可し、期限は短めにすること。
+
+キャッシュの確認・削除
+  cache                         このセッションのキャッシュ情報（ID、起動コマンド、期限、対象、
+                                キャッシュ済みプロファイルと作成時刻）
+  cache list                    このMacで動いているすべてのセッションの一覧（* が今のセッション）
+                                表示するのは情報だけ。他のセッションの値は読めない
+  cache rm <ID>...              指定したセッションを終了する（Touch ID 必須。ID は先頭4文字以上）
+  cache rm --current            今のセッションを終了する（Touch ID 必須）
+  cache rm --all                すべてのセッションを終了する（Touch ID 必須）
+                                終了したセッションでは、そのコマンドが終わるまで毎回 Touch ID になる
+                                （lock は今のセッションだけを、Touch ID なしで一時的に消す）
+
+セットアップ
+  init                          Secure Enclave 鍵を作成（最初の1回だけ）
+  help, -h, --help              このヘルプ
+  version                       バージョン
+
+名前の規則
+  profile   英数字で始まり、英数字と . _ - が使える        例: work, personal, stg.work
+  KEY       英字か _ で始まり、英数字と _ が使える（環境変数名として有効なもの）
+            プログラムの起動のしかたを変える名前は使えない（PATH, HOME, DYLD_*, LD_*,
+            KC_ENV_*, NODE_OPTIONS, BASH_ENV など）
+
+認証
+  復号のたびに Touch ID を求めます。Touch ID が使えないときは macOS のログインパスワード。
+  鍵は Secure Enclave の中にあり、このMacから取り出せません。Macを失ったら復号できないので、
+  APIキーを再発行して登録し直してください。
+
+ファイル（今の実行で使われているパス）
+  本体         {{.Self}}
+  ホーム       {{.Home}}
+  鍵の参照     {{.Identity}}
+  セッション   {{.Sessions}}   （動作中のセッションのソケット。秘密は置かない）
+  保管庫       {{.Vault}}
+                 <profile>.age   暗号文（中身は KEY=base64(値) の行）
+                 <profile>.keys  キー名の索引（平文。値は含まない）
+  補完（zsh）  {{.Completion}}
+                 ~/.zshrc で oh-my-zsh（compinit）より前に fpath へ追加して使う
+  プラグイン   {{.Plugin}}
+               （<ホーム>/bin を優先し、なければ PATH の絶対パスのディレクトリから探す）
+  これらの所有者が自分でないか、グループや他人が書き込める場合、kc-env は動作を止めます。
+
+ディレクトリを移動するとき
+  ホーム（bin/ identity.txt vault/ を含むディレクトリ）を丸ごと移動します。
+  ホームは常に「本体の場所の1つ上」として決まるので、設定の変更は不要です。
+  identity.txt はパスに依存しないので、移動しても同じ鍵がそのまま使えます。
+  PATH 用のシンボリックリンクだけは張り直してください:
+    ln -sf <新しいホーム>/bin/kc-env ~/.local/bin/kc-env'''
+
+help_plugin_missing = "（<ホーム>/bin にも PATH にもありません）"
+word_not_found = "（見つかりません）"
+word_all = "すべて"
+word_expired = "期限切れ"
+word_none = "なし"
+word_none_yet = "（まだなし）"
+
+# ---- エラー ----
+err_unknown_command = "不明なコマンドです: {{.Cmd}}（kc-env help を参照）"
+err_invalid_profile = "プロファイル名が正しくありません: {{.Name}}"
+err_invalid_key = "キー名が正しくありません: {{.Name}}"
+err_unsafe_key = "キー名 {{.Name}} は使えません。プログラムの起動のしかたを変える名前です（PATH, HOME, DYLD_*, LD_*, KC_ENV_*, NODE_OPTIONS など）"
+err_unsafe_key_in_profile = "プロファイル {{.Name}} に、使えないキー名 {{.Key}} が入っています。コマンドには渡しません。kc-env rm {{.Name}} {{.Key}} で削除してください"
+err_value_nul = "値に NUL バイトが含まれています。環境変数には入れられません"
+err_bad_identity = "{{.Path}} には、このMacの Secure Enclave 鍵（AGE-PLUGIN-SE-1...）を1行だけ置いてください"
+err_unsafe_perms = "権限が安全ではありません: {{.Path}}（所有者は自分で、グループや他人が書き込めないようにしてください）"
+err_socket_path = "セッション用ソケットのパスが長すぎます: {{.Path}}（ホームをもっと短いパスに置いてください）"
+err_session_unreachable = "セッションから応答がありません"
+err_not_initialized = "初期化されていません（{{.Home}}）。kc-env init を実行してください"
+err_no_profile = "プロファイルがありません: {{.Name}}（kc-env list で確認）"
+err_no_key = "キーがありません: {{.Profile}}/{{.Key}}"
+err_no_key_nothing_removed = "キーがありません: {{.Profile}}/{{.Key}}（何も削除していません）"
+err_plugin_input = "age のプラグインが入力を求めましたが、kc-env は対応していません: {{.Prompt}}"
+err_decrypt_failed = "復号に失敗したか、キャンセルされました"
+err_encrypt_failed = "暗号化に失敗しました"
+err_corrupt_profile = "プロファイル {{.Name}} に壊れた行があります"
+err_no_value = "値がありません"
+err_empty_value = "値が空です"
+err_cancelled = "キャンセルしました"
+err_aborted = "中止しました"
+err_already_initialized = "すでに初期化されています（{{.Path}}）"
+err_plugin_missing = "age-plugin-se が <ホーム>/bin にも PATH にもありません"
+err_keygen_failed = "鍵の作成に失敗しました"
+err_option_value = "{{.Opt}} には値が必要です"
+err_command_not_found = "コマンドが見つかりません: {{.Cmd}}"
+err_in_session = "すでに kc-env のセッションの中にいます（kc-env cache で確認）"
+err_invalid_ttl = "--ttl の値が正しくありません: {{.Value}}（例: 30m, 1h。最長 24h）"
+err_outside_session = "このシェルはセッション外です"
+err_invalid_id = "ID が正しくありません: {{.ID}}"
+err_id_matches = "ID '{{.ID}}' に一致するセッションが {{.Count}} 件あります（kc-env cache list で確認）"
+err_auth_failed_nothing = "本人確認に失敗しました。何も削除していません"
+err_rm_profile_no_index = "プロファイル '{{.Name}}' には索引がないため、キーが残っている可能性があります。kc-env ls --verify {{.Name}} で確認してください（または --force）"
+hint_rm_profile = "先にキーを削除する（kc-env rm --all {{.Name}}）か、kc-env rm-profile --force {{.Name}} で中身ごと削除してください"
+err_destroy_tty = "destroy は端末から直接実行してください（パイプ・ダイアログ・ほかのプログラムからは実行できません）"
+err_destroy_session = "kc-env のセッションの中では実行できません。セッション外の端末で実行してください"
+err_destroy_home = "ホームの場所を確認できないため中止します（{{.Home}}）"
+err_destroy_nothing = "鍵がありません（{{.Path}}）。削除するものはありません"
+err_phrase_mismatch = "文字列が一致しません。中止しました（何も削除していません）"
+err_destroy_left = """次のものが削除できませんでした:
+{{.Paths}}"""
+err_rm_profile_has_keys = "プロファイル '{{.Name}}' にはまだ {{.Count}} 個のキーがあります:"
+
+# ---- 使い方 ----
+usage_ls = "使い方: kc-env ls [--verify] <profile>"
+usage_set = "使い方: kc-env set <profile> <KEY>"
+usage_get = "使い方: kc-env get <profile> <KEY>"
+usage_header = "使い方: kc-env header <profile> <KEY> [--name <Header>] [--prefix <text>]"
+usage_exec = "使い方: kc-env exec <profile> -- <command...>"
+usage_rm = "使い方: kc-env rm <profile> <KEY> [<KEY>...]  または  kc-env rm --all <profile>"
+usage_rm_all = "使い方: kc-env rm --all <profile>（--all のときはキー名を付けない）"
+usage_rm_profile = "使い方: kc-env rm-profile [--force] <profile>"
+usage_cache = "使い方: kc-env cache [info | list | rm <ID>... | rm --current | rm --all]"
+usage_cache_rm = "使い方: kc-env cache rm <ID>... | --current | --all（ID は kc-env cache list で確認）"
+usage_destroy = "使い方: kc-env destroy（オプションなし。必ず確認します）"
+
+# ---- 入力・ダイアログ ----
+prompt_value = "{{.Label}} の値: "
+dialog_value = "{{.Label}} の値"
+button_cancel = "キャンセル"
+button_delete = "削除"
+prompt_auth = "Touch ID（またはパスワード）で本人確認をしてください"
+msg_waiting_auth = "Touch ID / パスワードを待っています..."
+confirm_rm_all = "プロファイル '{{.Name}}' のキー {{.Count}} 個をすべて削除しますか？（空のプロファイルは残ります）"
+confirm_rm_empty_profile = "空のプロファイル '{{.Name}}' を削除しますか？"
+confirm_rm_profile_force = "プロファイル '{{.Name}}' と中のキー {{.Count}} 個を削除しますか？元に戻せません。"
+
+# ---- 結果 ----
+msg_initialized = "初期化しました: {{.Home}}"
+msg_set = "保存しました: {{.Profile}}/{{.Key}}"
+msg_removed_key = "削除しました: {{.Profile}}/{{.Key}}"
+msg_removed_all = "{{.Name}} のキーをすべて削除しました"
+msg_removed_profile = "プロファイル {{.Name}} を削除しました"
+msg_no_profiles = "（プロファイルはまだありません: kc-env set <profile> <KEY>）"
+msg_session_started = "セッションを開始しました（期限 {{.Expires}}、対象 {{.Scope}}）。キャッシュはメモリにだけ持ち、コマンドの終了とともに消えます"
+msg_no_session = "有効なセッションはありません"
+msg_locked = "セッションのキャッシュを消しました（次の利用で再び Touch ID）"
+msg_cache_removed = "終了しました: {{.Count}} 件（そのセッションでは、以後は毎回 Touch ID になります）"
+list_profile = "{{.Name}}  （キー {{.Count}} 個、更新 {{.Updated}}）"
+list_no_index = "{{.Name}}  (索引なし, 更新 {{.Updated}})"
+list_no_index_hint = "? kc-env ls --verify {{.Name}} で索引を作成"
+
+# ---- セッション・キャッシュ ----
+remaining_minutes = "残り {{.Count}} 分"
+
+cache_outside = """kc-env cache: このシェルはセッション外です（復号のたびに Touch ID）
+  他のセッション: kc-env cache list"""
+cache_info = '''kc-env cache: このセッション
+  ID            {{.ID}}
+  起動コマンド  {{.Cmd}}
+  開始          {{.Start}}
+  期限          {{.Expires}}（{{.Remaining}}）
+  対象          {{.Scope}}
+  キャッシュ済み {{.Cached}}
+  終了: kc-env cache rm --current（Touch ID）'''
+cache_none = "kc-env cache: 動いているセッションはありません"
+cache_list_footer = """  * = このセッション
+  終了: kc-env cache rm <ID>... | --current | --all（Touch ID）"""
+cache_nothing_to_remove = "kc-env cache: 終了するセッションはありません"
+cache_rm_header = "次のセッションを終了します（キャッシュも消えます）:"
+cache_rm_item = "{{.ID}}  {{.Cmd}}  対象 {{.Scope}}  キャッシュ済み {{.Cached}}"
+col_id = "ID"
+col_started = "開始"
+col_expires = "期限"
+col_cmd = "起動"
+col_scope = "対象"
+col_cached = "キャッシュ済み"
+
+# ---- destroy ----
+destroy_banner = "  ██  kc-env destroy — Secure Enclave の鍵とすべてのキーを完全に削除します  ██"
+destroy_summary = '''  ホーム        {{.Home}}
+  鍵            {{.Identity}}
+                {{.Created}}
+  プロファイル  {{.Profiles}} 個 / キー {{.Keys}} 個{{.AtLeast}}'''
+destroy_at_least = " 以上"
+destroy_scope = '''  削除されるもの: identity.txt, vault/（全プロファイル）, run/（セッション）
+  残るもの:       bin/, completions/（kc-env init で作り直せます）
+
+  ※ 元に戻す方法はありません。鍵の実体はこのMacの Secure Enclave にしかなく、
+    identity.txt を消すとバックアップ（Time Machine 等）からも復号できなくなります。
+    使っていたAPIキーは、必要なら各サービスで再発行してください。'''
+destroy_confirm = "本当に削除しますか？"
+destroy_type_phrase = "確認のため、次の文字列をそのまま入力してください:  {{.Phrase}}"
+destroy_countdown = "{{.Seconds}} 秒後に Touch ID を求めます。中止するなら Ctrl-C ..."
+destroy_profile_unknown = "{{.Name}}  (キー数不明: 索引なし)"
+destroy_profile_line = "{{.Name}}  （キー {{.Count}} 個）"
+destroy_done = "削除しました: 鍵、{{.Profiles}} 個のプロファイル、{{.Keys}} 個のキー。もう一度使うときは: kc-env init"
+
+# ---- シェル補完（固定文。プレースホルダーなし） ----
+comp_cmd_list = "全プロファイルとキー名をツリー表示（Touch ID 不要）"
+comp_cmd_tree = "list の別名"
+comp_cmd_profiles = "プロファイル名を表示"
+comp_cmd_ls = "プロファイルのキー名を表示"
+comp_cmd_set = "キーを追加・上書き"
+comp_cmd_get = "値を表示（Touch ID）"
+comp_cmd_header = "HTTP ヘッダーを JSON で出力（Touch ID）"
+comp_cmd_exec = "キーを環境変数にしてコマンドを実行（Touch ID）"
+comp_cmd_rm = "キーを削除（複数可、--all で全キー。Touch ID）"
+comp_cmd_rm_profile = "空のプロファイルを削除（--force で中身ごと。Touch ID）"
+comp_cmd_session = "一定時間 Touch ID を省くセッションでコマンドを起動"
+comp_cmd_lock = "セッションのキャッシュを消す"
+comp_cmd_cache = "セッションの確認（info / list）と終了（rm, Touch ID）"
+comp_cmd_init = "Secure Enclave 鍵を作成（初回のみ）"
+comp_cmd_destroy = "鍵とすべてのキーを完全に削除（端末から直接・Touch ID 必須）"
+comp_cmd_help = "ヘルプを表示"
+comp_cmd_version = "バージョンを表示"
+comp_opt_verify = "復号して確認し、索引を作り直す（Touch ID）"
+comp_opt_force = "中のキーごと削除する"
+comp_opt_all = "プロファイル内のキーをすべて削除（プロファイルは残す）"
+comp_opt_name = "ヘッダー名（既定 Authorization）"
+comp_opt_prefix = "値の前に付ける文字列（既定 \"Bearer \"）"
+comp_opt_ttl = "有効期限（既定 30m、最長 24h）"
+comp_opt_only = "キャッシュを許すプロファイル（カンマ区切り）"
+comp_opt_dashdash = "この後に起動するコマンド（省略時はシェル）"
+comp_session_status = "今のセッションの状態を表示"
+comp_cache_info = "このセッションのキャッシュ情報"
+comp_cache_list = "動いているすべてのセッションの一覧"
+comp_cache_rm = "セッションを終了（Touch ID）"
+comp_cache_current = "今のセッション"
+comp_cache_all = "すべてのセッション"
+comp_ttl_15m = "15分"
+comp_ttl_30m = "30分（既定）"
+comp_ttl_1h = "1時間"
+comp_ttl_2h = "2時間"
+comp_tag_command = "kc-env のコマンド"
+comp_tag_profile = "プロファイル"
+comp_tag_key = "キー"
+comp_tag_cache = "セッション"
+comp_session_desc = "{{.Cmd}} 対象 {{.Scope}}"
+

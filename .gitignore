@@ -1,0 +1,30 @@
+# ===== kc-env: never commit keys or secrets (patterns match at any depth) =====
+# Secure Enclave key reference and its public key
+identity.txt
+identity*.txt
+recipient.txt
+# Encrypted profiles and the key-name index
+vault/
+*.age
+*.keys
+# Session caches
+run/
+# Plaintext secret files, in case one is created while testing
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ===== build outputs (see docs/build.md) =====
+bin/
+.build/
+src/
+
+# ===== OS / editor =====
+.DS_Store
+._*
+*.swp
+*~
+.vscode/
+.idea/
