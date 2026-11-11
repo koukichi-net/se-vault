@@ -23,7 +23,7 @@ se-env exec work -- gh repo list          # Touch ID 1回。値は gh にだけ�
 - 英語と日本語に対応しています。`SE_ENV_LANG`・`LC_ALL`・`LC_MESSAGES`・`LANG` から言語を選びます。
 - オフラインで動く小さな構成です。[age](https://github.com/FiloSottile/age) をライブラリとして組み込んだ Go のバイナリ1つと、Secure Enclave 用の [age-plugin-se](https://github.com/remko/age-plugin-se) だけで動きます。実行時に通信しません。
 
-暗号化の仕組みは [docs/encryption.ja.md](docs/encryption.ja.md) で説明しています。
+暗号化の仕組みは [docs/encryption.ja.md](docs/encryption.ja.md) で説明しています。Windows でどう守っているかは、その[10章](docs/encryption.ja.md#10-windows-での仕組み)にあります。
 
 ## 必要なもの
 

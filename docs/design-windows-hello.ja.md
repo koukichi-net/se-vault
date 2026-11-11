@@ -319,4 +319,4 @@ win/                        Rust（Cargo のワークスペース）
 
 ## 14. 残っていること
 
-- `encryption.ja.md` に Windows の章を加えるか、この文書を英語にも訳すかを決める
+- この文書を英語にも訳すかを決める（Windows での仕組みと脅威モデルは [encryption.ja.md](encryption.ja.md) の10章に日本語と英語で書いた）

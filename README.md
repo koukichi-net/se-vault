@@ -23,7 +23,7 @@ se-env exec work -- gh repo list          # Touch ID once; the secret is passed 
 - Messages are in English or Japanese, selected from `SE_ENV_LANG` / `LC_ALL` / `LC_MESSAGES` / `LANG`.
 - It is offline and small: one Go binary that links the [age](https://github.com/FiloSottile/age) library, plus [age-plugin-se](https://github.com/remko/age-plugin-se) for the Secure Enclave. No network access at runtime.
 
-How the encryption works is described in [docs/encryption.md](docs/encryption.md).
+How the encryption works is described in [docs/encryption.md](docs/encryption.md); [chapter 10](docs/encryption.md#10-how-it-works-on-windows) covers how se-env is protected on Windows.
 
 ## Requirements
 
