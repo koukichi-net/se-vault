@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["winhello-core", "sewin", "se-env-win", "age-plugin-winhello", "se-env-ui"]
+
+[workspace.package]
+version = "0.9.0"
+edition = "2024"
+license = "0BSD"
+publish = false
+
+[workspace.dependencies]
+winhello-core = { path = "winhello-core" }
+sewin = { path = "sewin" }
+age-core = "0.12"
+age-plugin = "0.7"
+bech32 = "0.11"
+base64 = "0.22"
+sha2 = "0.11"
+zeroize = "1.9"
+getrandom = "0.4"
+windows-sys = "0.61"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

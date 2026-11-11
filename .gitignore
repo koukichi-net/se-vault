@@ -16,10 +16,11 @@ run/
 *.pem
 *.key
 
-# ===== build outputs (see docs/build.md) =====
+# ===== build outputs (see docs/build_mac.md, docs/build_win.md) =====
 bin/
 .build/
-src/
+/src/
+win/target/
 
 # ===== OS / editor =====
 .DS_Store

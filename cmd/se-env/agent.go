@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"os"
@@ -10,8 +9,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 // A session keeps decrypted profiles in the memory of the `se-env session`
@@ -27,7 +24,6 @@ const (
 	maxMessage   = 32 << 20 // bytes per connection
 	idleTimeout  = 10 * time.Second
 	touchTimeout = 5 * time.Minute // a client holding a profile lock while Touch ID is shown
-	sockPathMax  = 103             // sun_path on macOS is 104 bytes including the NUL
 )
 
 type request struct {
@@ -63,7 +59,7 @@ type sessionInfo struct {
 
 type cacheEntry struct {
 	sum  string
-	data []byte
+	data []byte // sealed (sealSecret): on Windows encrypted while it is not being served
 	at   time.Time
 }
 
@@ -71,7 +67,7 @@ type agent struct {
 	a          *app
 	id, path   string
 	ln         *net.UnixListener
-	root       int // pid of the session's command
+	sys        sessionSys // how members are recognised (sys_*.go)
 	only       []string
 	cmd        string
 	start, exp time.Time // exp carries no monotonic reading: sleep counts towards the TTL
@@ -88,10 +84,7 @@ func (a *app) sockPath(id string) string { return filepath.Join(a.runDir, id+".s
 // newAgent creates the listening socket under a temporary name. Nothing can
 // reach it until serve() publishes it.
 func (a *app) newAgent(ttl time.Duration, only []string, cmdName string) (*agent, error) {
-	if err := os.MkdirAll(a.runDir, 0o700); err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(a.runDir, 0o700); err != nil {
+	if err := secureDir(a.runDir); err != nil {
 		return nil, err
 	}
 	os.RemoveAll(filepath.Join(a.runDir, "sessions")) // on-disk caches of se-env 0.4 and earlier
@@ -101,14 +94,17 @@ func (a *app) newAgent(ttl time.Duration, only []string, cmdName string) (*agent
 	if len(ag.path) > sockPathMax {
 		return nil, a.fail("err_socket_path", "Path", ag.path)
 	}
-	tmp := filepath.Join(a.runDir, "."+id+".tmp")
+	if err := ag.prepare(); err != nil {
+		return nil, err
+	}
+	tmp := ag.tmpPath()
 	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: tmp, Net: "unix"})
 	if err != nil {
 		return nil, err
 	}
 	ln.SetUnlinkOnClose(false)
 	ag.ln = ln
-	if err := os.Chmod(tmp, 0o600); err != nil {
+	if err := restrictSocket(tmp); err != nil {
 		ln.Close()
 		os.Remove(tmp)
 		return nil, err
@@ -118,15 +114,25 @@ func (a *app) newAgent(ttl time.Duration, only []string, cmdName string) (*agent
 	return ag, nil
 }
 
-func (ag *agent) tmpPath() string { return filepath.Join(ag.a.runDir, "."+ag.id+".tmp") }
+// tmpPath is where the socket is bound. Where the platform can tell members
+// before the command starts (bindDirect), that is its final name.
+func (ag *agent) tmpPath() string {
+	if bindDirect {
+		return ag.path
+	}
+	return filepath.Join(ag.a.runDir, "."+ag.id+".tmp")
+}
 
 // serve starts answering for the process tree rooted at pid and publishes the
 // socket. The accept loop runs before the socket has its final name, so no
 // connection ever waits unexamined.
 func (ag *agent) serve(root int) error {
-	ag.root = root
+	ag.setRoot(root)
 	go ag.acceptLoop()
 	go ag.expiryLoop()
+	if bindDirect {
+		return nil
+	}
 	if err := os.Rename(ag.tmpPath(), ag.path); err != nil {
 		ag.shutdown()
 		return err
@@ -146,6 +152,7 @@ func (ag *agent) acceptLoop() {
 
 func (ag *agent) expiryLoop() {
 	for {
+		platformTick()
 		left := time.Until(ag.exp)
 		if left <= 0 {
 			ag.shutdown()
@@ -173,6 +180,7 @@ func (ag *agent) shutdown() {
 	ag.ln.Close()
 	os.Remove(ag.path)
 	os.Remove(ag.tmpPath())
+	ag.release()
 }
 
 func (ag *agent) wipeAllLocked() {
@@ -244,74 +252,30 @@ func (ag *agent) info(member bool) *sessionInfo {
 	return si
 }
 
-// peerOf returns the uid and pid of the process that connected.
-func peerOf(c *net.UnixConn) (uid uint32, pid int, err error) {
-	raw, err := c.SyscallConn()
-	if err != nil {
-		return 0, 0, err
-	}
-	var cerr error
-	err = raw.Control(func(fd uintptr) {
-		var cred *unix.Xucred
-		if cred, cerr = unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED); cerr != nil {
-			return
-		}
-		uid = cred.Uid
-		pid, cerr = unix.GetsockoptInt(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERPID)
-	})
-	if err == nil {
-		err = cerr
-	}
-	return uid, pid, err
-}
-
-func procInfo(pid int) (ppid int, started time.Time, err error) {
-	kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
-	if err != nil {
-		return 0, time.Time{}, err
-	}
-	if int(kp.Proc.P_pid) != pid {
-		return 0, time.Time{}, errors.New("no such process")
-	}
-	st := kp.Proc.P_starttime
-	return int(kp.Eproc.Ppid), time.Unix(int64(st.Sec), int64(st.Usec)*1000), nil
-}
-
 // descendsFrom reports whether pid is root or one of its descendants. A
-// process whose ancestors have exited is re-parented to launchd and so no
-// longer counts.
+// process whose ancestors have exited is re-parented to launchd (macOS) and
+// so no longer counts. Windows keeps the dead parent's pid, which another
+// process may reuse: a parent that started after its child is not the
+// parent, so the walk stops there.
 func descendsFrom(pid, root int) bool {
+	var child time.Time
 	for i := 0; i < 256 && pid > 1; i++ {
+		ppid, started, err := procInfo(pid)
+		if err != nil || (!child.IsZero() && started.After(child)) {
+			return false
+		}
 		if pid == root {
 			return true
 		}
-		ppid, _, err := procInfo(pid)
-		if err != nil {
-			return false
-		}
-		pid = ppid
+		pid, child = ppid, started
 	}
 	return false
 }
 
-// isMember decides whether the connecting process belongs to this session.
-func (ag *agent) isMember(pid int, accepted time.Time) bool {
-	_, started, err := procInfo(pid)
-	if err != nil {
-		return false
-	}
-	// The pid was read from the socket; a process that began after the
-	// connection was accepted is a different process that reused the pid.
-	if started.After(accepted) {
-		return false
-	}
-	return descendsFrom(pid, ag.root)
-}
-
 func (ag *agent) handle(c *net.UnixConn, accepted time.Time) {
 	defer c.Close()
-	uid, pid, err := peerOf(c)
-	if err != nil || uid != uint32(os.Getuid()) {
+	same, pid, err := peerOf(c)
+	if err != nil || !same {
 		return
 	}
 	member := ag.isMember(pid, accepted)
@@ -404,7 +368,15 @@ func (ag *agent) lookup(p string) (data []byte, sum string, ok bool) {
 		delete(ag.entries, p)
 		return nil, "", false
 	}
-	return append([]byte(nil), e.data...), sum, true
+	// An entry that cannot be opened is a miss, never an empty profile: a
+	// client that took it for one would save over the real profile.
+	data, ok = openSecret(e.data)
+	if !ok {
+		wipe(e.data)
+		delete(ag.entries, p)
+		return nil, "", false
+	}
+	return data, sum, true
 }
 
 // store keeps a profile. With refreshOnly it replaces an existing entry and
@@ -418,8 +390,14 @@ func (ag *agent) store(p, sum string, data []byte, refreshOnly bool) bool {
 	}
 	if old != nil {
 		wipe(old.data)
+		delete(ag.entries, p)
 	}
-	ag.entries[p] = &cacheEntry{sum: sum, data: append([]byte(nil), data...), at: time.Now()}
+	// What cannot be protected in memory is not kept: se-env asks again.
+	sealed, ok := sealSecret(data)
+	if !ok {
+		return false
+	}
+	ag.entries[p] = &cacheEntry{sum: sum, data: sealed, at: time.Now()}
 	return true
 }
 

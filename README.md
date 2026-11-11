@@ -31,6 +31,16 @@ How the encryption works is described in [docs/encryption.md](docs/encryption.md
 - zsh, for Tab completion (optional).
 - To build: git, Go 1.26 or later, and Swift 6.2 or later (Xcode or the Command Line Tools).
 
+### Windows
+
+se-env also runs on Windows 10 / 11 with the same commands. The key is a **Windows Hello** key protected by the TPM, and every decryption asks for Windows Hello (face, fingerprint or PIN). It needs TPM 2.0 and a user with Windows Hello set up. See [docs/build_win.md](docs/build_win.md) to build and install, and [docs/design-windows-hello.ja.md](docs/design-windows-hello.ja.md) (Japanese) for the design. The main differences:
+
+- The key is an RSA key in the CNG provider for Windows Hello. Decryption happens inside it, so the private key never appears in se-env's memory.
+- To keep other programs of the same user out, se-env makes its process and threads unopenable, blocks DLL injection, forces ASLR, and encrypts the session cache in memory. This makes an attack harder; it is not a boundary against malware running as the same user, and neither is a session (design notes, chapters 7 and 12).
+- Windows Hello prompts appear only on the desktop of the user logged on at the PC itself: from inside SSH or Remote Desktop, no key can be created and nothing can be decrypted.
+- Session membership is decided by a job object instead of the parent chain.
+- macOS and Windows do not share a vault; each stores secrets its own way.
+
 ## Installation
 
 Get the source:
@@ -40,7 +50,7 @@ git clone https://github.com/koukichi-net/se-vault.git
 cd se-vault
 ```
 
-There is no build script. Build the two programs with the handful of commands in [docs/build.md](docs/build.md) (se-env with `go build` after verifying every Go module against `go.sum`; age-plugin-se from a pinned, verified commit with `swiftc`), then install them:
+There is no build script. Build the two programs with the handful of commands in [docs/build_mac.md](docs/build_mac.md) (se-env with `go build` after verifying every Go module against `go.sum`; age-plugin-se from a pinned, verified commit with `swiftc`), then install them:
 
 ```sh
 # Install to a directory of your choice (the "home"). ~/.local/share/se-env is a good default:
@@ -123,6 +133,14 @@ se-env lock                               # drop this session's cache; the next 
 Inside a session, the first decryption of each allowed profile asks for Touch ID, and later ones are answered from memory until the session ends or expires. The `se-env session` process keeps the decrypted profiles in its own memory, like ssh-agent: nothing is written to disk, no key is put in the environment, and it answers only processes that were started under `<command>`. It also enforces the TTL and `--only` itself, so a program inside the session cannot extend them.
 
 **Every program started inside the session can read those secrets without asking you**, and so can anything such a program runs (see [the threat model](docs/encryption.md#8-threat-model)). Keep `--only` narrow, keep the TTL short, and `se-env lock` when you finish.
+
+### Replacing the key
+
+```sh
+se-env rekey
+```
+
+This creates a new key, encrypts every profile to it again, and then deletes the old key. Each profile has to be decrypted with the old key, so Touch ID asks once per profile. If it stops half-way, the old key stays in `identity.old.txt` and still decrypts; run `se-env rekey` again to continue.
 
 ### Wiping everything
 
@@ -220,14 +238,17 @@ Use `--name` and `--prefix` for other header formats, for example `se-env header
   run/<id>.sock            socket of a running session (no secrets on disk)
 ```
 
-Repository layout: `cmd/se-env/` (Go source, tests and `locales/`), `completions/`, `docs/`. `bin/`, keys and vault files are listed in `.gitignore`.
+Repository layout: `cmd/se-env/` (Go source, tests and `locales/`), `win/` (Rust source for Windows), `completions/`, `docs/`. `bin/`, keys and vault files are listed in `.gitignore`.
 
 ## Development
 
 ```sh
 go test ./...     # unit tests, translation checks; no Secure Enclave needed (tests use software keys, which the program refuses)
 go vet ./...
+cd win && cargo test -p winhello-core   # key derivation and formats of the Windows version (runs on any OS)
 ```
+
+For the tests on Windows, see [docs/build_win.md](docs/build_win.md).
 
 ## Third-party software
 
@@ -240,7 +261,9 @@ The se-env binary statically links these Go modules (versions pinned in `go.sum`
 | [github.com/nicksnyder/go-i18n/v2](https://github.com/nicksnyder/go-i18n) | MIT |
 | [github.com/BurntSushi/toml](https://github.com/BurntSushi/toml) | MIT |
 
-se-env also needs [age-plugin-se](https://github.com/remko/age-plugin-se) (MIT, by Remko Tronçon), built separately as described in [docs/build.md](docs/build.md). It is not included in this repository.
+se-env also needs [age-plugin-se](https://github.com/remko/age-plugin-se) (MIT, by Remko Tronçon), built separately as described in [docs/build_mac.md](docs/build_mac.md). It is not included in this repository.
+
+The Rust programs of the Windows version (`win/`) link [age-core and age-plugin](https://github.com/str4d/rage), [windows-sys](https://github.com/microsoft/windows-rs), RustCrypto crates (all MIT or Apache-2.0) and others. Versions and the full dependency tree are pinned in `win/Cargo.lock`.
 
 If you redistribute built binaries, include the licenses of these components.
 

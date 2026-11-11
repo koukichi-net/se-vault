@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -43,8 +42,8 @@ func dialAgent(path string, ownAgent bool) (*agentConn, error) {
 		c.Close()
 		return nil, errNotAgent
 	}
-	uid, pid, err := peerOf(uc)
-	if err != nil || uid != uint32(os.Getuid()) || (ownAgent && !descendsFrom(os.Getpid(), pid)) {
+	same, pid, err := peerOf(uc)
+	if err != nil || !same || (ownAgent && !descendsFrom(os.Getpid(), pid)) {
 		c.Close()
 		return nil, errNotAgent
 	}
@@ -178,7 +177,7 @@ func (a *app) sessions() []sessionInfo {
 		}
 		rs, err := ask(path, request{Op: "status"}, false)
 		if err != nil {
-			if errors.Is(err, syscall.ECONNREFUSED) {
+			if isConnRefused(err) {
 				os.Remove(path)
 			}
 			continue

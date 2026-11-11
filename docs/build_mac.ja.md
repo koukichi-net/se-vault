@@ -1,6 +1,8 @@
-# ビルドとインストール
+# ビルドとインストール（macOS）
 
-[English](build.md) | 日本語
+[English](build_mac.md) | 日本語
+
+Windows の手順は [build_win.ja.md](build_win.ja.md) にあります。
 
 se-env は2つのプログラムでできています。
 

@@ -1,0 +1,10 @@
+[package]
+name = "se-env-ui"
+description = "The dialogs of se-env on Windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sewin.workspace = true

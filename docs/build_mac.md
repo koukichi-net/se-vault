@@ -1,6 +1,8 @@
-# Building and installing
+# Building and installing (macOS)
 
-English | [日本語](build.ja.md)
+English | [日本語](build_mac.ja.md)
+
+The Windows instructions are in [build_win.md](build_win.md).
 
 se-env consists of two programs:
 

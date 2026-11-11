@@ -2,15 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 	"unicode"
 )
@@ -19,20 +16,14 @@ func (a *app) cmdInit() error {
 	if exists(a.identityPath) {
 		return a.fail("err_already_initialized", "Path", a.identityPath)
 	}
-	if err := os.MkdirAll(a.vault, 0o700); err != nil {
+	if err := secureDir(a.vault); err != nil {
 		return err
 	}
 	if err := a.checkPerms(); err != nil {
 		return err
 	}
-	plug := a.pluginPath()
-	if plug == "" {
-		return a.fail("err_plugin_missing")
-	}
-	gen := exec.Command(plug, "keygen", "--access-control", "any-biometry-or-passcode", "-o", a.identityPath)
-	gen.Stdout, gen.Stderr = os.Stderr, os.Stderr
-	if err := gen.Run(); err != nil {
-		return a.fail("err_keygen_failed")
+	if err := newKeyFile(a, a.identityPath); err != nil {
+		return err
 	}
 	if _, err := a.recipient(); err != nil { // the public key must be derivable from the new key
 		os.Remove(a.identityPath)
@@ -346,41 +337,33 @@ func (a *app) cmdHeader(args []string) error {
 	return nil
 }
 
-// lookPathIn finds an executable like exec.LookPath, but in the given PATH.
-func lookPathIn(name, pathList string) (string, error) {
-	if strings.Contains(name, "/") {
-		if fi, err := os.Stat(name); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
-			return name, nil
-		}
-		return "", exec.ErrNotFound
-	}
-	for _, dir := range filepath.SplitList(pathList) {
-		if dir == "" {
-			dir = "."
-		}
-		p := filepath.Join(dir, name)
-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
-			return p, nil
-		}
-	}
-	return "", exec.ErrNotFound
-}
-
-// childEnv returns the environment with PATH restored and extra variables set.
+// childEnv returns the caller's environment with extra variables set: what
+// a command started by exec or session gets. PATH is the caller's again, the
+// variables se-env took out of its own environment are back (ownEnv), and
+// those it set for itself are gone.
 func (a *app) childEnv(extra map[string]string) []string {
+	drop := map[string]bool{envKey("PATH"): true, envKey(reasonEnv): true}
+	for _, k := range a.addedEnv {
+		drop[envKey(k)] = true
+	}
+	for k := range extra {
+		drop[envKey(k)] = true
+	}
 	var env []string
-	for _, e := range os.Environ() {
+	for _, e := range append(os.Environ(), a.hiddenEnv...) {
 		k, _, _ := strings.Cut(e, "=")
-		if k == "PATH" || k == reasonEnv {
-			continue
-		}
-		if _, override := extra[k]; override {
+		if k != "" && drop[envKey(k)] { // Windows also has "=C:=C:\\..." entries
 			continue
 		}
 		env = append(env, e)
 	}
 	env = append(env, "PATH="+a.origPath)
+	added := map[string]bool{}
 	for _, k := range sortedKeys(extra) {
+		if added[envKey(k)] { // Windows: a name differing only in case is the same variable
+			continue
+		}
+		added[envKey(k)] = true
 		env = append(env, k+"="+extra[k])
 	}
 	return env
@@ -416,7 +399,7 @@ func (a *app) cmdExec(args []string) error {
 	if err != nil {
 		return a.fail("err_command_not_found", "Cmd", args[0])
 	}
-	return syscall.Exec(path, args, a.childEnv(kv))
+	return runCommand(path, args, a.childEnv(kv))
 }
 
 // rm <profile> <KEY>...  |  rm --all <profile>
@@ -671,11 +654,7 @@ loop:
 		}
 	}
 	if len(args) == 0 {
-		sh := os.Getenv("SHELL")
-		if sh == "" {
-			sh = "/bin/zsh"
-		}
-		args = []string{sh}
+		args = []string{defaultShell()}
 	}
 	path, err := lookPathIn(args[0], a.origPath)
 	if err != nil {
@@ -699,33 +678,16 @@ loop:
 	cmd.Args[0] = args[0]
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.Env = a.childEnv(map[string]string{"SE_ENV_SESSION": ag.id}) // an ID, not a secret
-	// Ctrl-C / Ctrl-\ are meant for the child (it gets them from the terminal);
-	// TERM/HUP are forwarded. Handlers, unlike SIG_IGN, are not inherited by exec.
-	sigs := make(chan os.Signal, 4)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP)
-	defer signal.Stop(sigs)
+	sigs := catchSessionSignals()
+	defer sigs.stop()
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	go func() {
-		for s := range sigs {
-			if s == syscall.SIGTERM || s == syscall.SIGHUP {
-				_ = cmd.Process.Signal(s)
-			}
-		}
-	}()
+	sigs.forward(cmd.Process)
 	if err := ag.serve(cmd.Process.Pid); err != nil {
 		fmt.Fprintln(os.Stderr, "se-env:", err) // the command runs without a session
 	}
-	err = cmd.Wait()
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			return exitCode(128 + int(ws.Signal()))
-		}
-		return exitCode(ee.ExitCode())
-	}
-	return err
+	return childExit(cmd.Wait())
 }
 
 func (a *app) cmdLock() error {

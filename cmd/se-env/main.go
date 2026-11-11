@@ -10,16 +10,13 @@ import (
 	"regexp"
 	"runtime/debug"
 	"sync"
-	"syscall"
 )
 
-const version = "0.8.0"
+const version = "0.9.0"
 
 // exitTampered is the exit status when a profile's public values were changed
 // outside se-env. Nothing is run or printed in that case.
 const exitTampered = 3
-
-const pluginName = "age-plugin-se"
 
 var (
 	reProfile = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
@@ -33,6 +30,11 @@ type app struct {
 	identityPath           string
 	runDir, origPath       string
 	t                      *translator
+
+	// What se-env changed in its own environment and commands started by
+	// exec and session must not notice (ownEnv, childEnv): variables it took
+	// out ("NAME=value", given back) and names it added (left out).
+	hiddenEnv, addedEnv []string
 
 	sess        *session // set by activeSession
 	sessChecked bool
@@ -78,6 +80,7 @@ func newApp() (*app, error) {
 	os.Unsetenv("AGEDEBUG")
 	// Only se-env itself says what the Touch ID dialog asks for (withReason).
 	os.Unsetenv(reasonEnv)
+	a.ownEnv()
 	// The age library starts the plugin by name through PATH. Narrow PATH to
 	// the one directory that holds it; commands started by exec and session
 	// get the original PATH back (childEnv).
@@ -89,6 +92,22 @@ func newApp() (*app, error) {
 	return a, nil
 }
 
+// ownEnv takes out of se-env's own environment what would change how se-env
+// itself runs. Commands started by exec and session get the caller's
+// environment back (childEnv).
+//
+// GODEBUG switches off safety checks of the Go runtime se-env is built with:
+// execerrdot=0, for one, lets a program in the current directory run in
+// place of the plugin. The runtime follows the variable while the program
+// runs, so taking it out here is enough.
+func (a *app) ownEnv() {
+	if v, ok := os.LookupEnv("GODEBUG"); ok {
+		a.hiddenEnv = append(a.hiddenEnv, "GODEBUG="+v)
+		os.Unsetenv("GODEBUG")
+	}
+	a.platformEnv()
+}
+
 // pluginPath finds age-plugin-se: <home>/bin first, then the absolute
 // directories of the caller's PATH. Relative PATH entries are never used.
 func (a *app) pluginPath() string {
@@ -97,8 +116,8 @@ func (a *app) pluginPath() string {
 		if !filepath.IsAbs(dir) {
 			continue
 		}
-		p := filepath.Join(dir, pluginName)
-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
+		p := filepath.Join(dir, pluginFile)
+		if fi, err := os.Stat(p); err == nil && isExecutable(fi) {
 			return p
 		}
 	}
@@ -117,9 +136,10 @@ func ageVersion() string {
 }
 
 func main() {
-	syscall.Umask(0o077)
-	// Secrets live in this process's memory: never write a core file.
-	_ = syscall.Setrlimit(syscall.RLIMIT_CORE, &syscall.Rlimit{})
+	if err := platformInit(); err != nil {
+		fmt.Fprintln(os.Stderr, "se-env:", err)
+		os.Exit(1)
+	}
 	a, err := newApp()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "se-env:", err)
@@ -186,6 +206,8 @@ func (a *app) run(args []string) error {
 		return a.cmdCache(rest)
 	case "destroy":
 		return a.cmdDestroy(rest)
+	case "rekey":
+		return a.cmdRekey(rest)
 	case "__complete":
 		return a.cmdComplete(rest)
 	case "help", "-h", "--help":
@@ -221,6 +243,9 @@ func orEmpty(s string) string {
 }
 
 func (a *app) requireInit() error {
+	if err := a.platformReady(); err != nil {
+		return err
+	}
 	if !exists(a.identityPath) {
 		return a.fail("err_not_initialized", "Home", a.home)
 	}
@@ -228,14 +253,13 @@ func (a *app) requireInit() error {
 }
 
 // checkPerms refuses to work when something se-env trusts could be replaced
-// by another user: every such path must be owned by this user (or root) and
-// must not be writable by group or others.
+// by another user (unsafePath in sys_*.go says what that means).
 func (a *app) checkPerms() error {
-	paths := []string{a.home, a.bin, a.self, a.identityPath, a.vault, a.runDir}
+	paths := []string{a.home, a.bin, a.self, a.identityPath, a.oldIdentityPath(), a.vault, a.runDir}
 	if p := a.pluginPath(); p != "" {
 		paths = append(paths, filepath.Dir(p), p)
 	}
-	uid := uint32(os.Getuid())
+	paths = append(paths, a.platformPaths()...)
 	for _, p := range paths {
 		if p == "" {
 			continue
@@ -244,8 +268,7 @@ func (a *app) checkPerms() error {
 		if err != nil {
 			continue
 		}
-		st, ok := fi.Sys().(*syscall.Stat_t)
-		if fi.Mode().Perm()&0o022 != 0 || (ok && st.Uid != uid && st.Uid != 0) {
+		if unsafePath(p, fi) {
 			return a.fail("err_unsafe_perms", "Path", p)
 		}
 	}

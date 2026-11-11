@@ -31,6 +31,16 @@ se-env exec work -- gh repo list          # Touch ID 1回。値は gh にだけ�
 - zsh（Tab 補完を使う場合。任意）
 - ビルドには git、Go 1.26 以降、Swift 6.2 以降（Xcode または Command Line Tools）が必要です。
 
+### Windows
+
+Windows 10 / 11 でも、同じコマンドで使えます。鍵は TPM で守られた **Windows Hello** の鍵で、復号のたびに Windows Hello（顔・指紋・PIN）を求めます。TPM 2.0 と、Windows Hello を設定したユーザーが必要です。ビルドとインストールは [docs/build_win.ja.md](docs/build_win.ja.md)、設計と macOS 版との違いは [docs/design-windows-hello.ja.md](docs/design-windows-hello.ja.md) を参照してください。主な違いは次のとおりです。
+
+- 鍵は CNG の Windows Hello 用プロバイダーに作った RSA 鍵です。復号はその中で行うので、秘密鍵は se-env のメモリに出ません。
+- 同じユーザーのほかのプログラムから守るため、se-env のプロセスとスレッドを開けないようにし、DLL の注入を防ぎ、ASLR を強制し、セッションのキャッシュをメモリ上で暗号化します。攻撃を難しくするための備えで、同じユーザーのマルウェアに対する境界にはなりません。セッションも同じです（設計メモの7章と12章）。
+- Windows Hello の確認は、PC の前でログオンしているデスクトップにしか出ません。SSH やリモートデスクトップの中からは、鍵の作成も復号もできません。
+- セッションのメンバーは、親子関係ではなく Job Object で判定します。
+- macOS と Windows で同じ保管庫は使いません。それぞれの方式で別々に保管します。
+
 ## インストール
 
 ソースを取得します。
@@ -40,7 +50,7 @@ git clone https://github.com/koukichi-net/se-vault.git
 cd se-vault
 ```
 
-ビルド用のスクリプトはありません。[docs/build.ja.md](docs/build.ja.md) にある数個のコマンドで2つのプログラムをビルドします。se-env はすべての Go モジュールを `go.sum` と照合してから `go build` で、age-plugin-se は決められたコミットを確かめてから `swiftc` でビルドします。そのあと、次のようにインストールします。
+ビルド用のスクリプトはありません。[docs/build_mac.ja.md](docs/build_mac.ja.md) にある数個のコマンドで2つのプログラムをビルドします。se-env はすべての Go モジュールを `go.sum` と照合してから `go build` で、age-plugin-se は決められたコミットを確かめてから `swiftc` でビルドします。そのあと、次のようにインストールします。
 
 ```sh
 # 好きな場所（ホーム）に入れる。~/.local/share/se-env がおすすめです。
@@ -123,6 +133,14 @@ se-env lock                               # このセッションのキャッシ
 セッションの中では、許可したプロファイルは最初の復号だけ Touch ID を求めます。そのあとは、セッションが終わるか期限が切れるまで、メモリから応答します。復号した内容は、ssh-agent と同じように `se-env session` のプロセスが自分のメモリに持ちます。ディスクには何も書かず、環境変数にも鍵を入れません。応答するのは、`<コマンド>` の配下で起動したプロセスだけです。期限と `--only` もこのプロセスが管理するので、セッション内のプログラムが期限を延ばしたり対象を広げたりすることはできません。
 
 **セッションの中で起動したプログラムは、どれも確認なしにキャッシュされた秘密情報を読めます**。そのプログラムが実行するものも同じです（[脅威モデル](docs/encryption.ja.md#8-脅威モデル)を参照）。`--only` の対象は絞り、期限は短くし、終わったら `se-env lock` を実行してください。
+
+### 鍵を入れ替える
+
+```sh
+se-env rekey
+```
+
+新しい鍵を作り、すべてのプロファイルを新しい鍵で暗号化し直してから、古い鍵を削除します。プロファイルごとに古い鍵での復号が要るので、Touch ID はプロファイルの数だけ求めます。途中で止まっても、古い鍵は `identity.old.txt` に残り、復号にも使われます。もう一度 `se-env rekey` を実行すると続きから再開します。
 
 ### すべてを消す
 
@@ -219,14 +237,17 @@ alias ccs='se-env session --only work --ttl 30m -- claude'
   run/<id>.sock            動作中のセッションのソケット（秘密はディスクに置かない）
 ```
 
-リポジトリの構成：`cmd/se-env/`（Go のソース、テスト、`locales/`）、`completions/`、`docs/`。`bin/`、鍵や保管庫のファイルは `.gitignore` で除外しています。
+リポジトリの構成：`cmd/se-env/`（Go のソース、テスト、`locales/`）、`win/`（Windows 用の Rust のソース）、`completions/`、`docs/`。`bin/`、鍵や保管庫のファイルは `.gitignore` で除外しています。
 
 ## 開発
 
 ```sh
 go test ./...     # 単体テストと翻訳のチェック。Secure Enclave は不要（テストはソフトウェアの鍵を使う。本体はこの鍵を受け付けない）
 go vet ./...
+cd win && cargo test -p winhello-core   # Windows 版の鍵の導出と形式（どの OS でも実行できる）
 ```
+
+Windows でのテストは [docs/build_win.ja.md](docs/build_win.ja.md) を参照してください。
 
 ## サードパーティのソフトウェア
 
@@ -239,7 +260,9 @@ se-env のバイナリには、次の Go モジュールが静的にリンクさ
 | [github.com/nicksnyder/go-i18n/v2](https://github.com/nicksnyder/go-i18n) | MIT |
 | [github.com/BurntSushi/toml](https://github.com/BurntSushi/toml) | MIT |
 
-se-env には [age-plugin-se](https://github.com/remko/age-plugin-se)（MIT、Remko Tronçon）も必要です。[docs/build.ja.md](docs/build.ja.md) の手順で別にビルドします。このリポジトリには含まれていません。
+se-env には [age-plugin-se](https://github.com/remko/age-plugin-se)（MIT、Remko Tronçon）も必要です。[docs/build_mac.ja.md](docs/build_mac.ja.md) の手順で別にビルドします。このリポジトリには含まれていません。
+
+Windows 版の Rust のプログラム（`win/`）には、[age-core・age-plugin](https://github.com/str4d/rage)、[windows-sys](https://github.com/microsoft/windows-rs)、RustCrypto のクレート（いずれも MIT または Apache-2.0）などがリンクされています。バージョンと依存関係の全体は `win/Cargo.lock` で固定しています。
 
 ビルドしたバイナリを再配布する場合は、これらのライセンスを同梱してください。
 

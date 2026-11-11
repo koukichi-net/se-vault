@@ -1,0 +1,14 @@
+[package]
+name = "se-env-win"
+description = "se_env_win.dll: the Windows API calls of se-env (Go), with a C ABI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "se_env_win"
+crate-type = ["cdylib"]
+
+[dependencies]
+sewin.workspace = true

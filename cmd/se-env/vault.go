@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 
 	"filippo.io/age"
 	"filippo.io/age/plugin"
@@ -27,11 +26,8 @@ import (
 // key). The public key is derived from it every time; no separate file is
 // trusted for encryption.
 
-const (
-	seIdentityPrefix  = "AGE-PLUGIN-SE-"
-	seRecipientPrefix = "age1se1"
-	softwarePrefix    = "AGE-SECRET-KEY-"
-)
+// identityPrefix and recipientPrefix name the platform's key (sys_*.go).
+const softwarePrefix = "AGE-SECRET-KEY-"
 
 // softwareKeys lets the unit tests run without a Secure Enclave by accepting
 // a plain X25519 key in identity.txt. Nothing in the program sets it.
@@ -67,23 +63,26 @@ func dataLines(b []byte) []string {
 }
 
 // identityLine returns the single key line of identity.txt.
-func (a *app) identityLine() (string, error) {
-	b, err := os.ReadFile(a.identityPath)
+func (a *app) identityLine() (string, error) { return a.identityLineAt(a.identityPath) }
+
+// identityLineAt returns the single key line of an identity file.
+func (a *app) identityLineAt(path string) (string, error) {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 	lines := dataLines(b)
 	if len(lines) == 1 {
 		l := lines[0]
-		if strings.HasPrefix(l, seIdentityPrefix) || (softwareKeys && strings.HasPrefix(l, softwarePrefix)) {
+		if strings.HasPrefix(l, identityPrefix) || (softwareKeys && strings.HasPrefix(l, softwarePrefix)) {
 			return l, nil
 		}
 	}
-	return "", a.fail("err_bad_identity", "Path", a.identityPath)
+	return "", a.fail("err_bad_identity", "Path", path)
 }
 
 func (a *app) parseIdentity(l string) (age.Identity, error) {
-	if strings.HasPrefix(l, seIdentityPrefix) {
+	if strings.HasPrefix(l, identityPrefix) {
 		return plugin.NewIdentity(l, a.pluginUI())
 	}
 	return age.ParseX25519Identity(l)
@@ -100,7 +99,7 @@ func (a *app) identity() (age.Identity, error) {
 // deriveRecipient computes the public key that belongs to an identity line.
 // For a Secure Enclave key this asks the plugin (no Touch ID is needed).
 func (a *app) deriveRecipient(l string) (age.Recipient, error) {
-	if !strings.HasPrefix(l, seIdentityPrefix) {
+	if !strings.HasPrefix(l, identityPrefix) {
 		id, err := age.ParseX25519Identity(l)
 		if err != nil {
 			return nil, err
@@ -118,7 +117,7 @@ func (a *app) deriveRecipient(l string) (age.Recipient, error) {
 		return nil, a.fail("err_bad_identity", "Path", a.identityPath)
 	}
 	lines := dataLines(out)
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], seRecipientPrefix) {
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], recipientPrefix) {
 		return nil, a.fail("err_bad_identity", "Path", a.identityPath)
 	}
 	return plugin.NewRecipient(lines[0], a.pluginUI())
@@ -225,7 +224,8 @@ var (
 )
 
 func unsafeKey(k string) bool {
-	if unsafeKeyNames[k] {
+	k = envKey(k) // Windows: names differing only in case are the same variable
+	if unsafeKeyNames[k] || platformUnsafeNames[k] {
 		return true
 	}
 	for _, p := range unsafeKeyPrefixes {
@@ -348,7 +348,7 @@ func (a *app) snapshot(p string) (ct, pubCopy []byte, err error) {
 	if !a.holdsLock(p) {
 		if f, err := os.OpenFile(a.lockFile(p), os.O_CREATE|os.O_RDWR, 0o600); err == nil {
 			defer f.Close()
-			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_SH)
+			_ = lockFile(f, false)
 		}
 	}
 	if ct, err = os.ReadFile(a.profileFile(p)); err != nil {
@@ -378,15 +378,53 @@ func (a *app) decrypt(ct []byte, s *session) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	ids := []age.Identity{id}
+	if old, _ := a.oldIdentity(); old != nil { // a rekey that has not finished (rekey.go)
+		ids = append(ids, old)
+	}
 	var plain []byte
 	err = a.withReason(s, func() (err error) {
-		plain, err = decryptBytes(ct, id)
+		plain, err = decryptBytes(ct, ids...)
 		return err
 	})
 	if err != nil {
+		// Tell a lost key apart from a cancelled prompt: the vault cannot be
+		// decrypted again then, and saying "cancelled" would hide that.
+		if why := a.keyProblem(); why != "" {
+			return nil, a.fail("err_key_unusable", "Detail", why, "Path", a.identityPath)
+		}
 		return nil, a.fail("err_decrypt_failed")
 	}
 	return plain, nil
+}
+
+// keyProblem asks the plugin, which needs no Touch ID for it, whether the key
+// of identity.txt can still be used. It returns what the plugin says is
+// wrong, or "" when the key looks usable (the decryption was cancelled or
+// failed for another reason) or the plugin cannot be asked.
+func (a *app) keyProblem() string {
+	l, err := a.identityLine()
+	if err != nil || !strings.HasPrefix(l, identityPrefix) {
+		return ""
+	}
+	plug := a.pluginPath()
+	if plug == "" {
+		return ""
+	}
+	cmd := exec.Command(plug, "recipients")
+	cmd.Stdin = strings.NewReader(l + "\n")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	var ee *exec.ExitError
+	if err := cmd.Run(); err == nil || !errors.As(err, &ee) {
+		return ""
+	}
+	why, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n")
+	why = strings.TrimPrefix(strings.TrimSpace(why), pluginName+": ")
+	if why == "" {
+		why = "?"
+	}
+	return showValue(why) // from another program: one printable line, bounded
 }
 
 func (a *app) parseLoaded(p string, plain, pubCopy []byte, allowUnsafe bool) (*loaded, error) {
@@ -609,7 +647,7 @@ func (a *app) lockProfile(p string) (unlock func(), err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockFile(f, true); err != nil {
 		f.Close()
 		return nil, err
 	}

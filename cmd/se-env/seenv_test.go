@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,13 @@ import (
 // process ancestry, which only real processes can exercise).
 func TestMain(m *testing.M) {
 	softwareKeys = true
+	newKeyFile = func(a *app, path string) error {
+		id, err := age.GenerateX25519Identity()
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("# test\n"+id.String()+"\n"), 0o600)
+	}
 	// No dialog in the tests: the alert is appended to <home>/alerts instead.
 	alertDialog = func(a *app, profile, title, msg string) {
 		f, err := os.OpenFile(filepath.Join(a.home, "alerts"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -35,14 +43,25 @@ func TestMain(m *testing.M) {
 			f.Close()
 		}
 	}
+	if os.Getenv("SE_ENV_TEST_SLEEP") != "" { // a process that is not in any session
+		time.Sleep(30 * time.Second)
+		os.Exit(0)
+	}
 	if path := os.Getenv("SE_ENV_TEST_FAKE_AGENT"); path != "" {
 		fakeAgent(path)
 	}
 	if home := os.Getenv("SE_ENV_TEST_HOME"); home != "" {
 		os.Exit(report(appAt(home).run(os.Args[1:])))
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	for _, f := range testCleanups {
+		f()
+	}
+	os.Exit(code)
 }
+
+// testCleanups run after all tests (set up by platform test files).
+var testCleanups []func()
 
 func localeIDs(t *testing.T, name string) map[string]any {
 	t.Helper()
@@ -62,7 +81,7 @@ func TestLocalesHaveSameIDs(t *testing.T) {
 	en := localeIDs(t, "en.toml")
 	entries, _ := localeFS.ReadDir("locales")
 	for _, e := range entries {
-		if e.Name() == "en.toml" {
+		if e.Name() == "en.toml" || e.IsDir() {
 			continue
 		}
 		other := localeIDs(t, e.Name())
@@ -74,6 +93,20 @@ func TestLocalesHaveSameIDs(t *testing.T) {
 		for id := range other {
 			if _, ok := en[id]; !ok {
 				t.Errorf("%s: extra %q (not in en.toml)", e.Name(), id)
+			}
+		}
+	}
+}
+
+// The Windows overrides may only replace messages that exist in en.toml.
+func TestWindowsLocalesOverrideOnly(t *testing.T) {
+	en := localeIDs(t, "en.toml")
+	entries, _ := localeFS.ReadDir("locales/windows")
+	for _, e := range entries {
+		other := localeIDs(t, "windows/"+e.Name())
+		for id := range other {
+			if _, ok := en[id]; !ok {
+				t.Errorf("windows/%s: %q is not in en.toml", e.Name(), id)
 			}
 		}
 	}
@@ -114,7 +147,7 @@ func TestTemplatesRender(t *testing.T) {
 		"Sessions", "Vault", "Completion", "Shell", "Plugin", "Name", "Profile", "Key", "Cmd", "Path",
 		"Prompt", "Label", "Opt", "Value", "ID", "Start", "Expires", "Remaining", "Scope", "Cached",
 		"State", "Created", "Profiles", "Keys", "AtLeast", "Servers", "Phrase", "Seconds", "Paths", "Count", "Updated",
-		"Shown", "Real", "Chain", "Action", "Header", "Target", "Session"} {
+		"Shown", "Real", "Chain", "Action", "Header", "Target", "Session", "Detail"} {
 		data[k] = "X"
 	}
 	b := newBundle()
@@ -207,10 +240,10 @@ func appAt(home string) *app {
 }
 
 // testApp builds an app in a temp home with a software (X25519) key. The home
-// is under /tmp because a Unix socket path must stay short.
+// is in testTempDir because a Unix socket path must stay short.
 func testApp(t *testing.T) *app {
 	t.Helper()
-	home, err := os.MkdirTemp("/tmp", "se")
+	home, err := os.MkdirTemp(testTempDir(), "se")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,6 +402,9 @@ func TestIndexAndProfileNamesAreFiltered(t *testing.T) {
 }
 
 func TestUnsafePermissionsAreRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permissions; see TestUnsafeACLsAreRefused")
+	}
 	a := testApp(t)
 	os.MkdirAll(a.vault, 0o700)
 	if err := a.requireInit(); err != nil {
@@ -532,9 +568,16 @@ func TestSessionExpires(t *testing.T) {
 // A process that is not under the session's command gets nothing, whatever
 // SE_ENV_SESSION says. Here the "command" is a pid this test does not descend from.
 func TestSessionRefusesOutsiders(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// The agent puts its own process in the session's job, so an agent
+		// inside the test process makes the test a member. The outsider is
+		// tested with real processes in TestSessionEndToEnd.
+		t.Skip("membership is by job object on Windows")
+	}
 	a := testApp(t)
 	a.save("work", map[string]string{"K": "v"})
-	sleeper := exec.Command("/bin/sleep", "30")
+	sleeper := exec.Command(os.Args[0])
+	sleeper.Env = append(os.Environ(), "SE_ENV_TEST_SLEEP=1")
 	if err := sleeper.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +710,7 @@ func TestSessionEndToEnd(t *testing.T) {
 cp "$SE_ENV_TEST_HOME/bogus" "$SE_ENV_TEST_HOME/identity.txt"   # main key gone
 [ "$("$SE_ENV_BIN" get prod K)" = REAL ] || exit 11       # served by the session
 "$SE_ENV_BIN" get other T >/dev/null 2>&1 && exit 12      # outside --only
-"$SE_ENV_BIN" exec prod -- /bin/sh -c '[ "$K" = REAL ]' || exit 13
+"$SE_ENV_BIN" exec prod -- sh -c '[ "$K" = REAL ]' || exit 13
 touch "$SE_ENV_TEST_HOME/ready"
 i=0; while [ ! -e "$SE_ENV_TEST_HOME/go" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
 [ "$("$SE_ENV_BIN" get prod K)" = REAL ] || exit 14       # the outsider changed nothing
@@ -676,7 +719,7 @@ exit 0`
 	done := make(chan int, 1)
 	var sessErr string
 	go func() {
-		_, e, code := se(t, a, nil, "", "session", "--only", "prod", "--ttl", "1m", "--", "/bin/sh", "-c", script)
+		_, e, code := se(t, a, nil, "", "session", "--only", "prod", "--ttl", "1m", "--", testShell(), "-c", script)
 		sessErr = e
 		done <- code
 	}()
@@ -739,7 +782,7 @@ cp "$SE_ENV_TEST_HOME/bogus" "$SE_ENV_TEST_HOME/identity.txt"
 sleep 2.5
 "$SE_ENV_BIN" get prod K >/dev/null 2>&1 && exit 12
 exit 0`
-	if _, e, code := se(t, a, nil, "", "session", "--ttl", "2s", "--", "/bin/sh", "-c", script); code != 0 {
+	if _, e, code := se(t, a, nil, "", "session", "--ttl", "2s", "--", testShell(), "-c", script); code != 0 {
 		t.Fatalf("step %d: %s", code, e)
 	}
 }
@@ -752,7 +795,7 @@ func TestCLIRefusals(t *testing.T) {
 	if _, e, code := se(t, a, nil, "a\x00b", "set", "prod", "K"); code == 0 || !strings.Contains(e, "NUL") {
 		t.Errorf("set of a NUL value: %d %q", code, e)
 	}
-	if _, e, code := se(t, a, nil, "", "session", "--ttl", "999999999999999d", "--", "/usr/bin/true"); code == 0 || !strings.Contains(e, "--ttl") {
+	if _, e, code := se(t, a, nil, "", "session", "--ttl", "999999999999999d", "--", "true"); code == 0 || !strings.Contains(e, "--ttl") {
 		t.Errorf("huge ttl: %d %q", code, e)
 	}
 	se(t, a, nil, "v", "set", "prod", "K")
@@ -806,7 +849,7 @@ func TestPublicValuesSaveLoadList(t *testing.T) {
 	if string(cp) != "URL=aHR0cHM6Ly9leGFtcGxlLmNvbQ==\n" {
 		t.Fatalf("copy on disk: %q", cp)
 	}
-	if fi, _ := os.Stat(a.publicFile("work")); fi.Mode().Perm() != 0o600 {
+	if fi, _ := os.Stat(a.publicFile("work")); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 { // Windows: the ACL (TestUnsafeACLsAreRefused)
 		t.Errorf("copy mode: %v", fi.Mode())
 	}
 	ct, _ := os.ReadFile(a.profileFile("work"))
@@ -912,14 +955,14 @@ func TestPublicTamperingCLI(t *testing.T) {
 	if out, _, _ := se(t, a, nil, "", "list"); !strings.Contains(out, "URL = https://example.com") || strings.Contains(out, "s3cret") {
 		t.Fatalf("list: %q", out)
 	}
-	if out, _, code := se(t, a, nil, "", "exec", "work", "--", "/bin/sh", "-c", `printf %s "$URL|$TOKEN"`); code != 0 || out != "https://example.com|s3cret" {
+	if out, _, code := se(t, a, nil, "", "exec", "work", "--", "sh", "-c", `printf %s "$URL|$TOKEN"`); code != 0 || out != "https://example.com|s3cret" {
 		t.Fatalf("exec: %d %q", code, out)
 	}
 
 	os.WriteFile(a.publicFile("work"), []byte("URL="+base64Std("https://evil.example")+"\n"), 0o600)
 	marker := filepath.Join(a.home, "ran")
 	for _, args := range [][]string{
-		{"exec", "work", "--", "/usr/bin/touch", marker},
+		{"exec", "work", "--", "touch", marker},
 		{"get", "work", "TOKEN"},
 		{"get", "work", "URL"},
 		{"header", "work", "TOKEN"},
@@ -950,7 +993,7 @@ func TestPublicTamperingCLI(t *testing.T) {
 		!strings.Contains(e, "https://evil.example") || !strings.Contains(e, "https://example.com") {
 		t.Fatalf("ls --verify: %d %q %q", code, out, e)
 	}
-	if out, _, code := se(t, a, nil, "", "exec", "work", "--", "/bin/sh", "-c", `printf %s "$URL"`); code != 0 || out != "https://example.com" {
+	if out, _, code := se(t, a, nil, "", "exec", "work", "--", "sh", "-c", `printf %s "$URL"`); code != 0 || out != "https://example.com" {
 		t.Fatalf("exec after repair: %d %q", code, out)
 	}
 	if _, e, _ := se(t, a, nil, "", "ls", "--verify", "work"); strings.Contains(e, "did not match") {
@@ -1165,7 +1208,8 @@ func TestCommandText(t *testing.T) {
 
 func TestCallerChain(t *testing.T) {
 	c := callerChain(os.Getpid())
-	if !strings.HasSuffix(c, " › "+filepath.Base(os.Args[0])+" › se-env") {
+	self := strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe")
+	if !strings.HasSuffix(c, " › "+self+" › se-env") {
 		t.Errorf("chain of the test process: %q", c)
 	}
 	if c := callerChain(0); c != "?" {
@@ -1195,11 +1239,171 @@ func TestReasonStaysOutOfCommands(t *testing.T) {
 		t.Fatalf("during %q, after %q", during, os.Getenv(reasonEnv))
 	}
 	se(t, a, nil, "v", "set", "work", "K")
-	out, e, code := se(t, a, []string{reasonEnv + "=forged"}, "", "exec", "work", "--", "/usr/bin/env")
+	out, e, code := se(t, a, []string{reasonEnv + "=forged"}, "", "exec", "work", "--", "env")
 	if code != 0 {
 		t.Fatalf("exec: %s", e)
 	}
 	if strings.Contains(out, reasonEnv) || !strings.Contains(out, "K=v") {
 		t.Fatalf("child environment:\n%s", out)
+	}
+}
+
+// keepEnv puts variables back as they were when the test ends (ownEnv
+// changes the environment of the test process).
+func keepEnv(t *testing.T, names ...string) {
+	t.Helper()
+	for _, k := range names {
+		if v, ok := os.LookupEnv(k); ok {
+			t.Cleanup(func() { os.Setenv(k, v) })
+		} else {
+			t.Cleanup(func() { os.Unsetenv(k) })
+		}
+	}
+}
+
+// GODEBUG changes how the Go runtime inside se-env behaves (execerrdot=0
+// lets a program in the current directory run as the plugin), so se-env
+// takes it out of its own environment. The commands it starts still get the
+// caller's value, unless the profile has a key of that name.
+func TestRuntimeSettingsAreNotFollowed(t *testing.T) {
+	keepEnv(t, "GODEBUG", "NoDefaultCurrentDirectoryInExePath")
+	os.Setenv("GODEBUG", "execerrdot=0")
+	a := testApp(t)
+	a.ownEnv()
+	if v, ok := os.LookupEnv("GODEBUG"); ok {
+		t.Fatalf("se-env still runs with GODEBUG=%s", v)
+	}
+	count := func(env []string, want string) (n int) {
+		for _, e := range env {
+			if e == want {
+				n++
+			}
+		}
+		return n
+	}
+	env := a.childEnv(map[string]string{"K": "v"})
+	if count(env, "GODEBUG=execerrdot=0") != 1 || count(env, "K=v") != 1 {
+		t.Fatalf("the command lost the caller's GODEBUG:\n%s", strings.Join(env, "\n"))
+	}
+	env = a.childEnv(map[string]string{"GODEBUG": "x=1"})
+	if count(env, "GODEBUG=x=1") != 1 || count(env, "GODEBUG=execerrdot=0") != 0 {
+		t.Fatalf("the profile's value must replace the caller's:\n%s", strings.Join(env, "\n"))
+	}
+	// Without the variable nothing is added.
+	os.Unsetenv("GODEBUG")
+	b := testApp(t)
+	b.ownEnv()
+	if len(b.hiddenEnv) != 0 || strings.Contains(strings.Join(b.childEnv(nil), "\n"), "GODEBUG=") {
+		t.Fatalf("GODEBUG appeared from nowhere: %v", b.hiddenEnv)
+	}
+}
+
+// When decryption fails, se-env asks the plugin (no Touch ID) whether the key
+// still exists, so that a lost key is not reported as a cancelled prompt.
+func TestKeyProblemIsReported(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake plugin is a shell script; checked on a Windows VM instead (V12)")
+	}
+	a := testApp(t)
+	os.WriteFile(a.identityPath, []byte(identityPrefix+"1TEST\n"), 0o600)
+	plug := filepath.Join(a.bin, pluginFile)
+	fake := func(script string) {
+		if err := os.WriteFile(plug, []byte("#!/bin/sh\ncat >/dev/null\n"+script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake("printf '%s\\n' '" + pluginName + ": the key does not exist (0x8009000D)' 'second line' >&2\nexit 1\n")
+	if got := a.keyProblem(); got != "the key does not exist (0x8009000D)" {
+		t.Fatalf("lost key: %q", got)
+	}
+	fake("echo recipient\n")
+	if got := a.keyProblem(); got != "" {
+		t.Fatalf("usable key reported as a problem: %q", got)
+	}
+	fake("printf '\\033[31mred\\n' >&2\nexit 1\n")
+	if got := a.keyProblem(); strings.ContainsRune(got, 0x1b) {
+		t.Fatalf("control characters from the plugin reached the message: %q", got)
+	}
+	os.Remove(plug)
+	if got := a.keyProblem(); got != "" {
+		t.Fatalf("no plugin: %q", got)
+	}
+	msg := a.t.S("err_key_unusable", "Detail", "x", "Path", a.identityPath)
+	if strings.Contains(msg, "<no value>") || !strings.Contains(msg, a.identityPath) {
+		t.Fatalf("message: %q", msg)
+	}
+}
+
+// ---- rekey -------------------------------------------------------------------
+
+func TestRekey(t *testing.T) {
+	a := testApp(t)
+	if err := a.save("work", map[string]string{"K": "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.saveProfile("pub", map[string]string{"U": "https://example.com"}, map[string]bool{"U": true}); err != nil {
+		t.Fatal(err)
+	}
+	oldLine, _ := a.identityLine()
+	if err := fresh(a).cmdRekey(nil); err != nil {
+		t.Fatal(err)
+	}
+	newLine, _ := a.identityLine()
+	if newLine == oldLine || exists(a.oldIdentityPath()) || exists(a.newIdentityPath()) {
+		t.Fatalf("identity after rekey: changed=%v old=%v new=%v", newLine != oldLine,
+			exists(a.oldIdentityPath()), exists(a.newIdentityPath()))
+	}
+	if kv, err := fresh(a).load("work"); err != nil || kv["K"] != "v1" {
+		t.Fatalf("load after rekey: %v %v", kv, err)
+	}
+	if kv, pub, err := fresh(a).loadProfile("pub"); err != nil || kv["U"] != "https://example.com" || !pub["U"] {
+		t.Fatalf("public values after rekey: %v %v %v", kv, pub, err)
+	}
+	oldID, _ := age.ParseX25519Identity(oldLine)
+	ct, _ := os.ReadFile(a.profileFile("work"))
+	if _, err := decryptBytes(ct, oldID); err == nil {
+		t.Fatal("the old key still decrypts a profile")
+	}
+	if alerts(a) != "" {
+		t.Fatalf("alerts: %q", alerts(a))
+	}
+}
+
+// An interrupted rekey: the new key is in place, one profile is on it and one
+// is not. Both still decrypt, and running rekey again finishes the job.
+func TestRekeyResumes(t *testing.T) {
+	a := testApp(t)
+	a.save("work", map[string]string{"K": "w"})
+	a.save("other", map[string]string{"K": "o"})
+	oldLine, _ := a.identityLine()
+	oldID, _ := age.ParseX25519Identity(oldLine)
+	newID, _ := age.GenerateX25519Identity()
+	os.Rename(a.identityPath, a.oldIdentityPath())
+	os.WriteFile(a.identityPath, []byte(newID.String()+"\n"), 0o600)
+	ct, _ := os.ReadFile(a.profileFile("work"))
+	plain, err := decryptBytes(ct, oldID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nct, _ := encryptBytes(plain, newID.Recipient())
+	os.WriteFile(a.profileFile("work"), nct, 0o600)
+
+	for p, want := range map[string]string{"work": "w", "other": "o"} {
+		if kv, err := fresh(a).load(p); err != nil || kv["K"] != want {
+			t.Fatalf("load %s half-way: %v %v", p, kv, err)
+		}
+	}
+	if err := fresh(a).cmdRekey(nil); err != nil {
+		t.Fatal(err)
+	}
+	if exists(a.oldIdentityPath()) {
+		t.Fatal("identity.old.txt left")
+	}
+	for p, want := range map[string]string{"work": "w", "other": "o"} {
+		ct, _ := os.ReadFile(a.profileFile(p))
+		got, err := decryptBytes(ct, newID)
+		if err != nil || !strings.Contains(string(got), "K="+base64Std(want)) {
+			t.Fatalf("%s after resume: %q %v", p, got, err)
+		}
 	}
 }

@@ -247,7 +247,7 @@ se-env は復号した結果を次のように使います。
 
 プラグインは `PATH` から名前で起動されます。そこで se-env は自分の `PATH` をプラグインのあるディレクトリ1つだけに絞ります（`<ホーム>/bin` を優先し、なければ `PATH` の絶対パスのディレクトリ）。`exec` と `session` で起動するコマンドには、元の `PATH` を戻して渡します。また、se-env は自分の環境から `AGEDEBUG` を消します。`AGEDEBUG=plugin` があると、age のライブラリがプラグインとの通信を、ファイル鍵も含めて stderr に出すためです。ダイアログには常に `/usr/bin/osascript` を使い、`PATH` からは探しません。
 
-Touch ID のダイアログはプラグインが出すので、macOS が表示する名前は「age-plugin-se」だけです。誰が何のために求めているかを示すため、se-env はプラグインを起動する間だけ `SE_ENV_AUTH_REASON` に文を入れます。`patches/age-plugin-se-reason.patch` を当てたプラグイン（[build.ja.md](build.ja.md)）は、その文をダイアログに出します。
+Touch ID のダイアログはプラグインが出すので、macOS が表示する名前は「age-plugin-se」だけです。誰が何のために求めているかを示すため、se-env はプラグインを起動する間だけ `SE_ENV_AUTH_REASON` に文を入れます。`patches/age-plugin-se-reason.patch` を当てたプラグイン（[build_mac.ja.md](build_mac.ja.md)）は、その文をダイアログに出します。
 
 ```text
 “age-plugin-se”で次の操作を実行しようとしています:
@@ -345,4 +345,4 @@ Touch ID のダイアログはプラグインが出すので、macOS が表示�
 
 ## 9. ビルドの完全性
 
-se-env にビルド用のスクリプトはありません。[build.ja.md](build.ja.md) に、手で実行する数個のコマンドを載せています。`go mod verify` ですべての Go モジュール（age のライブラリを含む）を `go.sum` に固定されたハッシュと照合し、`GOTOOLCHAIN=local`（ツールチェーンを自動でダウンロードしない）と `GOFLAGS=-mod=readonly` で se-env をビルドします。age-plugin-se は決められたコミットを新しい空のディレクトリに取得します。コミットハッシュが一致することと、**チェックアウトの中にそれ以外のファイルがないこと**を確かめ、`patches/age-plugin-se-reason.patch` を当てて変わったのが `Sources/Crypto.swift` だけであることを確かめてから、パッケージマネージャを使わずに `swiftc` で直接ビルドします。関わるコードは se-env のバイナリとこのプラグインだけです。
+se-env にビルド用のスクリプトはありません。[build_mac.ja.md](build_mac.ja.md) に、手で実行する数個のコマンドを載せています。`go mod verify` ですべての Go モジュール（age のライブラリを含む）を `go.sum` に固定されたハッシュと照合し、`GOTOOLCHAIN=local`（ツールチェーンを自動でダウンロードしない）と `GOFLAGS=-mod=readonly` で se-env をビルドします。age-plugin-se は決められたコミットを新しい空のディレクトリに取得します。コミットハッシュが一致することと、**チェックアウトの中にそれ以外のファイルがないこと**を確かめ、`patches/age-plugin-se-reason.patch` を当てて変わったのが `Sources/Crypto.swift` だけであることを確かめてから、パッケージマネージャを使わずに `swiftc` で直接ビルドします。関わるコードは se-env のバイナリとこのプラグインだけです。

@@ -247,7 +247,7 @@ What se-env does with the result:
 
 The plugin is started by name through `PATH`, so se-env narrows its own `PATH` to the single directory that holds the plugin (`<home>/bin` first, then the absolute directories of your `PATH`). Commands started by `exec` and `session` get your original `PATH` back. se-env also removes `AGEDEBUG` from its environment, because with `AGEDEBUG=plugin` the age library would print the plugin protocol, file key included, to stderr. The dialog helper is always `/usr/bin/osascript`, never looked up on `PATH`.
 
-The Touch ID dialog is shown by the plugin, so macOS names only "age-plugin-se". To say who asks and what for, se-env sets `SE_ENV_AUTH_REASON` just while it starts the plugin, and a plugin built with `patches/age-plugin-se-reason.patch` ([build.md](build.md)) puts that text in the dialog:
+The Touch ID dialog is shown by the plugin, so macOS names only "age-plugin-se". To say who asks and what for, se-env sets `SE_ENV_AUTH_REASON` just while it starts the plugin, and a plugin built with `patches/age-plugin-se-reason.patch` ([build_mac.md](build_mac.md)) puts that text in the dialog:
 
 ```text
 “age-plugin-se” is trying to use the se-env key:
@@ -345,4 +345,4 @@ These checks stop se-env itself from being used to delete secrets unattended (fo
 
 ## 9. Build integrity
 
-se-env ships no build script. [build.md](build.md) lists the few commands to run by hand: `go mod verify` checks every Go module (the age library included) against the hashes pinned in `go.sum`, and se-env is built with `GOTOOLCHAIN=local` (so no toolchain is downloaded) and `GOFLAGS=-mod=readonly`. age-plugin-se is cloned into a new, empty directory at a pinned commit; the commit hash **and the absence of any other file in the checkout** are verified, `patches/age-plugin-se-reason.patch` is applied and checked to change only `Sources/Crypto.swift`, and it is compiled directly with `swiftc`, which needs no package manager. The se-env binary and the plugin are the only code involved.
+se-env ships no build script. [build_mac.md](build_mac.md) lists the few commands to run by hand: `go mod verify` checks every Go module (the age library included) against the hashes pinned in `go.sum`, and se-env is built with `GOTOOLCHAIN=local` (so no toolchain is downloaded) and `GOFLAGS=-mod=readonly`. age-plugin-se is cloned into a new, empty directory at a pinned commit; the commit hash **and the absence of any other file in the checkout** are verified, `patches/age-plugin-se-reason.patch` is applied and checked to change only `Sources/Crypto.swift`, and it is compiled directly with `swiftc`, which needs no package manager. The se-env binary and the plugin are the only code involved.

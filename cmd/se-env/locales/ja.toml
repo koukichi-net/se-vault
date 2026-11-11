@@ -95,6 +95,9 @@ se-env {{.Version}} — Secure Enclave（Touch ID）で保護したAPIキーを�
 
 セットアップ
   init                          Secure Enclave 鍵を作成（最初の1回だけ）
+  rekey                         新しい鍵を作り、全プロファイルを暗号化し直してから古い鍵を
+                                削除する（プロファイルごとに Touch ID）。途中で止まったら、
+                                もう一度実行すると続きから再開する
   help, -h, --help              このヘルプ
   version                       バージョン
 
@@ -162,6 +165,7 @@ err_no_key = "キーがありません: {{.Profile}}/{{.Key}}"
 err_no_key_nothing_removed = "キーがありません: {{.Profile}}/{{.Key}}（何も削除していません）"
 err_plugin_input = "age のプラグインが入力を求めましたが、se-env は対応していません: {{.Prompt}}"
 err_decrypt_failed = "復号に失敗したか、キャンセルされました"
+err_key_unusable = "{{.Path}} の Secure Enclave の鍵が使えなくなっています: {{.Detail}}。この鍵で暗号化したプロファイルは復号できません"
 err_encrypt_failed = "暗号化に失敗しました"
 err_corrupt_profile = "プロファイル {{.Name}} に壊れた行があります"
 err_no_value = "値がありません"
@@ -170,7 +174,15 @@ err_cancelled = "キャンセルしました"
 err_aborted = "中止しました"
 err_already_initialized = "すでに初期化されています（{{.Path}}）"
 err_plugin_missing = "age-plugin-se が <ホーム>/bin にも PATH にもありません"
+err_dll_missing = "{{.Path}} を読み込めません（Windows のみ。se-env.exe と同じディレクトリに置いてください）"
+err_harden_failed = "このプロセスをほかのプログラムから保護できませんでした（{{.Value}}）。秘密情報は扱いません"
 err_keygen_failed = "鍵の作成に失敗しました"
+err_rekey_failed = "rekey がプロファイル {{.Name}} で止まりました。もう一度 se-env rekey を実行すると続きから再開します。それまで古い鍵は {{.Path}} に残り、復号にも使われます"
+msg_rekey_start = "rekey: 新しい鍵を作ります。そのあと {{.Profiles}} 個のプロファイルを1つずつ古い鍵で復号し（それぞれ Touch ID）、新しい鍵で暗号化し直します"
+msg_rekey_resume = "rekey: 前回終わらなかった rekey の続きをします（古い鍵は {{.Path}}）"
+msg_rekey_profile = "  {{.Name}}: 新しい鍵で暗号化しました"
+msg_rekey_profile_done = "  {{.Name}}: すでに新しい鍵になっています"
+msg_rekey_done = "rekey が終わりました: {{.Profiles}} 個のプロファイルが新しい鍵を使います。古い鍵は削除しました"
 err_option_value = "{{.Opt}} には値が必要です"
 err_command_not_found = "コマンドが見つかりません: {{.Cmd}}"
 err_in_session = "すでに se-env のセッションの中にいます（se-env cache で確認）"
@@ -202,6 +214,7 @@ usage_rm_profile = "使い方: se-env rm-profile [--force] <profile>"
 usage_cache = "使い方: se-env cache [info | list | rm <ID>... | rm --current | rm --all]"
 usage_cache_rm = "使い方: se-env cache rm <ID>... | --current | --all（ID は se-env cache list で確認）"
 usage_destroy = "使い方: se-env destroy（オプションなし。必ず確認します）"
+usage_rekey = "使い方: se-env rekey   （オプションなし）"
 
 # ---- 入力・ダイアログ ----
 prompt_value = "{{.Label}} の値: "
@@ -241,6 +254,8 @@ auth_do_rm = "削除する"
 auth_do_rm_empty = "空であることを確かめてから削除する"
 auth_do_rm_profile = "中のキー {{.Count}} 個ごと削除する"
 auth_do_destroy = "完全に削除する（se-env destroy）"
+auth_target_rekey = "プロファイル「{{.Profile}}」（古い鍵で）"
+auth_do_rekey = "新しい鍵で暗号化し直す（se-env rekey）"
 # ---- 結果 ----
 msg_initialized = "初期化しました: {{.Home}}"
 msg_set = "保存しました: {{.Profile}}/{{.Key}}"
@@ -335,6 +350,7 @@ comp_cmd_lock = "セッションのキャッシュを消す"
 comp_cmd_cache = "セッションの確認（info / list）と終了（rm, Touch ID）"
 comp_cmd_init = "Secure Enclave 鍵を作成（初回のみ）"
 comp_cmd_destroy = "鍵とすべてのキーを完全に削除（端末から直接・Touch ID 必須）"
+comp_cmd_rekey = "新しい鍵を作り、全プロファイルを暗号化し直す（プロファイルごとに Touch ID）"
 comp_cmd_help = "ヘルプを表示"
 comp_cmd_version = "バージョンを表示"
 comp_opt_verify = "復号して確認し、索引と公開値の写しを作り直す（必ず Touch ID）"
