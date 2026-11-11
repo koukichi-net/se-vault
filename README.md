@@ -140,6 +140,14 @@ Messages, help and Tab completion follow the first non-empty of `SE_ENV_LANG`, `
 SE_ENV_LANG=ja se-env help
 ```
 
+To always use Japanese, add this line to `~/.zshrc`. It is not needed if `LANG` or the like is already Japanese, such as `ja_JP.UTF-8`.
+
+```sh
+export SE_ENV_LANG=ja
+```
+
+se-env started by a tool such as Claude Code (for example as an MCP server's `headersHelper`) inherits that tool's environment, so the setting applies when you start the tool from this shell. In the Touch ID dialog, the first line ("“age-plugin-se” is trying to …") is written by macOS and follows the macOS language setting.
+
 Translations live in [`cmd/se-env/locales/`](cmd/se-env/locales) as [go-i18n](https://github.com/nicksnyder/go-i18n) TOML files and are embedded in the binary. To add a language, copy `en.toml` to `<lang>.toml` (for example `de.toml`), translate the values, and run `go test ./...`. The tests fail if any message is missing, extra, or uses an unknown placeholder. Plural forms use go-i18n's CLDR categories (`one`, `other`, ...).
 
 ## Using se-env with other tools (examples)

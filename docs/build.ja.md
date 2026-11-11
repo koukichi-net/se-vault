@@ -83,6 +83,8 @@ se-env init        # Secure Enclave の鍵を作る（初回のインストー�
 
 Tab 補完を使う場合は、README の「[シェルの設定（任意）](../README.ja.md#シェルの設定任意)」にある1行を `~/.zshrc` に追加します。「[シェルのショートカット](../README.ja.md#シェルのショートカットzshrc)」の関数や alias も、使いたいものがあれば `~/.zshrc` に写してください。
 
+メッセージを日本語にするには、`~/.zshrc` に `export SE_ENV_LANG=ja` を追加します。`LANG` などがすでに日本語なら不要です。詳しくは README の「[言語](../README.ja.md#言語)」を参照してください。
+
 ## 更新するとき
 
 - Go モジュール：`go get <モジュール>@<バージョン>` と `go mod tidy` で `go.mod` と `go.sum` が更新されます。ビルドし直す前に、変更内容（特に `filippo.io/age`）を確かめてください。

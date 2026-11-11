@@ -83,6 +83,8 @@ The home is always the directory above the program, so nothing else needs config
 
 To use Tab completion, add the line from "[Shell setup (optional)](../README.md#shell-setup-optional)" in the README to `~/.zshrc`. Copy any of the functions or aliases from "[Shell shortcuts](../README.md#shell-shortcuts-zshrc)" to `~/.zshrc` if you want them.
 
+For Japanese messages, add `export SE_ENV_LANG=ja` to `~/.zshrc`. It is not needed if `LANG` or the like is already Japanese. See "[Language](../README.md#language)" in the README.
+
 ## Updating
 
 - Go modules: `go get <module>@<version>` and `go mod tidy` update `go.mod` and `go.sum`. Review the changes (especially to `filippo.io/age`) before rebuilding.

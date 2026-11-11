@@ -140,6 +140,14 @@ Secure Enclave の鍵の参照と全プロファイルを削除し、すべて�
 SE_ENV_LANG=ja se-env help
 ```
 
+いつも日本語で使うには、`~/.zshrc` に次の1行を追加します。`LANG` などがすでに `ja_JP.UTF-8` のような日本語の値なら、追加しなくても日本語になります。
+
+```sh
+export SE_ENV_LANG=ja
+```
+
+Claude Code のようなツールが起動する se-env（MCP サーバーの `headersHelper` など）はそのツールの環境変数を受け継ぐので、ツールをこのシェルから起動していれば、この設定も効きます。Touch ID のダイアログのうち、1行目の「“age-plugin-se”で次の操作を実行しようとしています:」は macOS が表示する文なので、macOS の言語設定に従います。
+
 翻訳は [`cmd/se-env/locales/`](cmd/se-env/locales) に [go-i18n](https://github.com/nicksnyder/go-i18n) の TOML ファイルとして置いてあり、バイナリに埋め込まれます。言語を追加するには、`en.toml` を `<言語>.toml`（例：`de.toml`）としてコピーし、値を翻訳してから `go test ./...` を実行してください。メッセージの抜けや余分、存在しないプレースホルダーがあれば、テストが失敗して知らせます。複数形は go-i18n の CLDR の区分（`one`、`other` など）で書きます。
 
 ## ほかのツールとの組み合わせ例
