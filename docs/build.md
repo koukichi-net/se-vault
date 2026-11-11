@@ -81,7 +81,7 @@ se-env init        # create the Secure Enclave key (first install only)
 
 The home is always the directory above the program, so nothing else needs configuring. Everything in it must be owned by you and not writable by group or others; se-env stops otherwise.
 
-Then add the Tab completion line from the README, and any of its shell examples, if you want them.
+To use Tab completion, add the line from "[Shell setup (optional)](../README.md#shell-setup-optional)" in the README to `~/.zshrc`. Copy any of the functions or aliases from "[Shell shortcuts](../README.md#shell-shortcuts-zshrc)" to `~/.zshrc` if you want them.
 
 ## Updating
 
