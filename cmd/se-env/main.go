@@ -1,4 +1,4 @@
-// Command kc-env stores secrets in profiles encrypted with a Secure Enclave
+// Command se-env stores secrets in profiles encrypted with a Secure Enclave
 // key (via age and age-plugin-se) and hands them to commands on demand.
 package main
 
@@ -13,10 +13,10 @@ import (
 	"syscall"
 )
 
-const version = "0.6.0"
+const version = "0.7.0"
 
 // exitTampered is the exit status when a profile's public values were changed
-// outside kc-env. Nothing is run or printed in that case.
+// outside se-env. Nothing is run or printed in that case.
 const exitTampered = 3
 
 const pluginName = "age-plugin-se"
@@ -41,7 +41,7 @@ type app struct {
 	locked map[string]bool // profiles this process holds the vault lock for
 }
 
-// userError is printed as "kc-env: <msg>" and exits with status 1.
+// userError is printed as "se-env: <msg>" and exits with status 1.
 type userError struct{ msg string }
 
 func (e *userError) Error() string { return e.msg }
@@ -63,7 +63,7 @@ func newApp() (*app, error) {
 		self = exe
 	}
 	a := &app{self: self, origPath: os.Getenv("PATH"), t: newTranslator()}
-	// The home is always the directory above the program (<home>/bin/kc-env).
+	// The home is always the directory above the program (<home>/bin/se-env).
 	// It cannot be redirected through the environment.
 	a.home = filepath.Dir(filepath.Dir(self))
 	a.bin = filepath.Join(a.home, "bin")
@@ -118,7 +118,7 @@ func main() {
 	_ = syscall.Setrlimit(syscall.RLIMIT_CORE, &syscall.Rlimit{})
 	a, err := newApp()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "kc-env:", err)
+		fmt.Fprintln(os.Stderr, "se-env:", err)
 		os.Exit(1)
 	}
 	os.Exit(report(a.run(os.Args[1:])))
@@ -137,9 +137,9 @@ func report(err error) int {
 	case errors.As(err, &te): // already reported by tampered()
 		return exitTampered
 	case errors.As(err, &ue):
-		fmt.Fprintln(os.Stderr, "kc-env:", ue.msg)
+		fmt.Fprintln(os.Stderr, "se-env:", ue.msg)
 	default:
-		fmt.Fprintln(os.Stderr, "kc-env:", err)
+		fmt.Fprintln(os.Stderr, "se-env:", err)
 	}
 	return 1
 }
@@ -188,7 +188,7 @@ func (a *app) run(args []string) error {
 		a.cmdHelp()
 		return nil
 	case "version", "--version":
-		fmt.Printf("kc-env %s (age %s)\n", version, ageVersion())
+		fmt.Printf("se-env %s (age %s)\n", version, ageVersion())
 		return nil
 	default:
 		return a.fail("err_unknown_command", "Cmd", cmd)
@@ -223,7 +223,7 @@ func (a *app) requireInit() error {
 	return a.checkPerms()
 }
 
-// checkPerms refuses to work when something kc-env trusts could be replaced
+// checkPerms refuses to work when something se-env trusts could be replaced
 // by another user: every such path must be owned by this user (or root) and
 // must not be writable by group or others.
 func (a *app) checkPerms() error {

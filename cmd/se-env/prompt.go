@@ -43,7 +43,7 @@ func (a *app) readSecret(label string) (string, error) {
 		}
 		v = strings.TrimRight(string(b), "\r\n")
 		if v == "" {
-			script := fmt.Sprintf(`display dialog %s default answer "" with hidden answer with title "kc-env"`,
+			script := fmt.Sprintf(`display dialog %s default answer "" with hidden answer with title "se-env"`,
 				appleScriptString(a.t.S("dialog_value", "Label", label))) + "\n" + `text returned of result`
 			out, err := exec.Command(osascript, "-e", script).Output()
 			if err != nil {
@@ -70,7 +70,7 @@ func (a *app) confirm(msg string) error {
 		return a.fail("err_aborted")
 	}
 	cancel, del := appleScriptString(a.t.S("button_cancel")), appleScriptString(a.t.S("button_delete"))
-	script := fmt.Sprintf(`display dialog %s buttons {%s, %s} default button %s cancel button %s with icon caution with title "kc-env"`,
+	script := fmt.Sprintf(`display dialog %s buttons {%s, %s} default button %s cancel button %s with icon caution with title "se-env"`,
 		appleScriptString(msg), cancel, del, cancel, cancel)
 	if err := exec.Command(osascript, "-e", script).Run(); err != nil {
 		return a.fail("err_aborted")
@@ -79,7 +79,7 @@ func (a *app) confirm(msg string) error {
 }
 
 // alertDialog shows a critical alert that stays on screen until the user
-// dismisses it, even after kc-env has exited: kc-env is often run by another
+// dismisses it, even after se-env has exited: se-env is often run by another
 // program that never shows its stderr. The dialog process holds a lock for
 // the profile, so repeated failures do not stack up dialogs. A variable so
 // the tests can replace it.

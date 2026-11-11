@@ -221,7 +221,7 @@ var (
 		"SHELL": true, "AGEDEBUG": true, "NODE_OPTIONS": true, "PYTHONSTARTUP": true,
 		"PYTHONPATH": true, "PERL5OPT": true, "RUBYOPT": true, "GIT_SSH_COMMAND": true,
 	}
-	unsafeKeyPrefixes = []string{"DYLD_", "LD_", "KC_ENV_"}
+	unsafeKeyPrefixes = []string{"DYLD_", "LD_", "SE_ENV_"}
 )
 
 func unsafeKey(k string) bool {
@@ -418,7 +418,7 @@ func (a *app) loadRaw(p string, useSession, allowUnsafe bool) (*loaded, error) {
 				return nil, err
 			}
 			if l.hit {
-				if l.sum == "" { // an agent of kc-env 0.5: it does not say what it cached
+				if l.sum == "" { // an agent of se-env 0.5: it does not say what it cached
 					l.close()
 					break
 				}
@@ -478,7 +478,7 @@ func publicDiff(l *loaded) []string {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	if len(keys) == 0 { // same values, but not the bytes kc-env writes
+	if len(keys) == 0 { // same values, but not the bytes se-env writes
 		keys = []string{"?"}
 	}
 	return keys
@@ -489,7 +489,7 @@ func publicDiff(l *loaded) []string {
 type tamperError struct{ profile string }
 
 func (e *tamperError) Error() string {
-	return "public values of " + e.profile + " were changed outside kc-env"
+	return "public values of " + e.profile + " were changed outside se-env"
 }
 
 // tampered tells the user, on stderr and in a dialog, and stops the command.
@@ -500,7 +500,7 @@ func (a *app) tampered(p string, keys []string) error {
 	return &tamperError{p}
 }
 
-// checked refuses a profile whose public copy was changed outside kc-env.
+// checked refuses a profile whose public copy was changed outside se-env.
 func (a *app) checked(p string, l *loaded, err error) (map[string]string, map[string]bool, error) {
 	if err != nil {
 		return nil, nil, err

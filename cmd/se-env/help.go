@@ -26,7 +26,7 @@ func (a *app) cmdHelp() {
 		"Identity", a.mark(a.identityPath),
 		"Sessions", a.runDir,
 		"Vault", a.mark(a.vault),
-		"Completion", a.mark(filepath.Join(a.home, "completions", "_kc-env")),
+		"Completion", a.mark(filepath.Join(a.home, "completions", "_se-env")),
 		"Plugin", plugin,
 	))
 	fmt.Println()

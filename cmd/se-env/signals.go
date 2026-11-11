@@ -8,7 +8,7 @@ import (
 	"syscall"
 )
 
-// On SIGINT/SIGTERM/SIGHUP kc-env stops its own child processes (the
+// On SIGINT/SIGTERM/SIGHUP se-env stops its own child processes (the
 // age-plugin-se instance waiting for Touch ID) before exiting, so no orphaned
 // Touch ID prompt is left on screen. Locks need no cleanup: the vault lock is
 // released by the kernel and a session lock by the closed connection.

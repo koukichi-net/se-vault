@@ -40,10 +40,10 @@ func newTranslator() *translator {
 	return &translator{bundle: b, loc: i18n.NewLocalizer(b, lang, "en"), lang: lang}
 }
 
-// detectLang returns a BCP 47 tag from KC_ENV_LANG, LC_ALL, LC_MESSAGES or LANG
+// detectLang returns a BCP 47 tag from SE_ENV_LANG, LC_ALL, LC_MESSAGES or LANG
 // (first non-empty wins, as in POSIX). "C"/"POSIX" mean English.
 func detectLang() string {
-	for _, k := range []string{"KC_ENV_LANG", "LC_ALL", "LC_MESSAGES", "LANG"} {
+	for _, k := range []string{"SE_ENV_LANG", "LC_ALL", "LC_MESSAGES", "LANG"} {
 		if v := os.Getenv(k); v != "" {
 			return normalizeLocale(v)
 		}

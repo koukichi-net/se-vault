@@ -14,9 +14,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// A session keeps decrypted profiles in the memory of the `kc-env session`
+// A session keeps decrypted profiles in the memory of the `se-env session`
 // process (the agent) and nowhere else: nothing is written to disk and no key
-// is put in the environment. kc-env processes started under the session's
+// is put in the environment. se-env processes started under the session's
 // command ask the agent over a Unix socket. The agent answers only peers that
 //   - run as the same user, and
 //   - descend from the session's command (checked through the kernel's
@@ -53,7 +53,7 @@ type cachedInfo struct {
 type sessionInfo struct {
 	ID     string       `json:"id"`
 	Cmd    string       `json:"cmd"`
-	Pid    int          `json:"pid"` // the agent (kc-env session) process
+	Pid    int          `json:"pid"` // the agent (se-env session) process
 	Start  int64        `json:"start"`
 	Exp    int64        `json:"exp"`
 	Only   []string     `json:"only,omitempty"`
@@ -94,7 +94,7 @@ func (a *app) newAgent(ttl time.Duration, only []string, cmdName string) (*agent
 	if err := os.Chmod(a.runDir, 0o700); err != nil {
 		return nil, err
 	}
-	os.RemoveAll(filepath.Join(a.runDir, "sessions")) // on-disk caches of kc-env 0.4 and earlier
+	os.RemoveAll(filepath.Join(a.runDir, "sessions")) // on-disk caches of se-env 0.4 and earlier
 	id := randomHex(8)
 	ag := &agent{a: a, id: id, path: a.sockPath(id), only: only, cmd: cmdName,
 		entries: map[string]*cacheEntry{}, locks: map[string]chan struct{}{}, done: make(chan struct{})}
@@ -160,7 +160,7 @@ func (ag *agent) expiryLoop() {
 }
 
 // shutdown ends the session: the cache is wiped and the socket disappears.
-// The command keeps running; kc-env inside it asks for Touch ID again.
+// The command keeps running; se-env inside it asks for Touch ID again.
 func (ag *agent) shutdown() {
 	ag.mu.Lock()
 	defer ag.mu.Unlock()
@@ -344,7 +344,7 @@ func (ag *agent) handle(c *net.UnixConn, accepted time.Time) {
 		switch rq.Op {
 		case "status": // metadata only; any process of this user may ask
 			rs = response{OK: true, Info: ag.info(member)}
-		case "lock", "end": // dropping the cache only ever makes kc-env ask again
+		case "lock", "end": // dropping the cache only ever makes se-env ask again
 			ag.mu.Lock()
 			ag.wipeAllLocked()
 			ag.mu.Unlock()

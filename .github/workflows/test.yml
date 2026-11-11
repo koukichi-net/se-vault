@@ -15,7 +15,7 @@ concurrency:
 jobs:
   test:
     name: test
-    # kc-env is macOS only (Secure Enclave, LOCAL_PEERCRED, osascript).
+    # se-env is macOS only (Secure Enclave, LOCAL_PEERCRED, osascript).
     runs-on: macos-latest
     timeout-minutes: 15
     env:
@@ -51,4 +51,4 @@ jobs:
         run: go test -race ./...
 
       - name: Build
-        run: go build -trimpath -o bin/kc-env ./cmd/kc-env
+        run: go build -trimpath -o bin/se-env ./cmd/se-env

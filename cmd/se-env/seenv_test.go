@@ -21,8 +21,8 @@ import (
 )
 
 // The tests use software (X25519) keys instead of the Secure Enclave. When
-// KC_ENV_TEST_HOME is set, the test binary acts as kc-env itself with that
-// home, so tests can run real kc-env processes (the session agent decides by
+// SE_ENV_TEST_HOME is set, the test binary acts as se-env itself with that
+// home, so tests can run real se-env processes (the session agent decides by
 // process ancestry, which only real processes can exercise).
 func TestMain(m *testing.M) {
 	softwareKeys = true
@@ -34,10 +34,10 @@ func TestMain(m *testing.M) {
 			f.Close()
 		}
 	}
-	if path := os.Getenv("KC_ENV_TEST_FAKE_AGENT"); path != "" {
+	if path := os.Getenv("SE_ENV_TEST_FAKE_AGENT"); path != "" {
 		fakeAgent(path)
 	}
-	if home := os.Getenv("KC_ENV_TEST_HOME"); home != "" {
+	if home := os.Getenv("SE_ENV_TEST_HOME"); home != "" {
 		os.Exit(report(appAt(home).run(os.Args[1:])))
 	}
 	os.Exit(m.Run())
@@ -143,16 +143,16 @@ func TestNormalizeLocale(t *testing.T) {
 }
 
 func TestDetectLangPrecedence(t *testing.T) {
-	t.Setenv("KC_ENV_LANG", "")
+	t.Setenv("SE_ENV_LANG", "")
 	t.Setenv("LC_ALL", "")
 	t.Setenv("LC_MESSAGES", "ja_JP.UTF-8")
 	t.Setenv("LANG", "en_US.UTF-8")
 	if got := detectLang(); got != "ja-JP" {
 		t.Errorf("got %q, want ja-JP (LC_MESSAGES before LANG)", got)
 	}
-	t.Setenv("KC_ENV_LANG", "en")
+	t.Setenv("SE_ENV_LANG", "en")
 	if got := detectLang(); got != "en" {
-		t.Errorf("got %q, want en (KC_ENV_LANG wins)", got)
+		t.Errorf("got %q, want en (SE_ENV_LANG wins)", got)
 	}
 }
 
@@ -200,7 +200,7 @@ func TestDisplayWidth(t *testing.T) {
 const bogusIdentity = "AGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ9Z5\n"
 
 func appAt(home string) *app {
-	return &app{self: filepath.Join(home, "bin", "kc-env"), home: home, bin: filepath.Join(home, "bin"),
+	return &app{self: filepath.Join(home, "bin", "se-env"), home: home, bin: filepath.Join(home, "bin"),
 		vault: filepath.Join(home, "vault"), identityPath: filepath.Join(home, "identity.txt"),
 		runDir: filepath.Join(home, "run"), origPath: os.Getenv("PATH"), t: newTranslator()}
 }
@@ -209,7 +209,7 @@ func appAt(home string) *app {
 // is under /tmp because a Unix socket path must stay short.
 func testApp(t *testing.T) *app {
 	t.Helper()
-	home, err := os.MkdirTemp("/tmp", "kc")
+	home, err := os.MkdirTemp("/tmp", "se")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,14 +220,14 @@ func testApp(t *testing.T) *app {
 	}
 	os.MkdirAll(filepath.Join(home, "bin"), 0o700)
 	os.WriteFile(filepath.Join(home, "identity.txt"), []byte("# test\n"+id.String()+"\n"), 0o600)
-	t.Setenv("KC_ENV_SESSION", "")
-	t.Setenv("KC_ENV_LANG", "en")
+	t.Setenv("SE_ENV_SESSION", "")
+	t.Setenv("SE_ENV_LANG", "en")
 	return appAt(home)
 }
 
 func breakMainKey(a *app) { os.WriteFile(a.identityPath, []byte(bogusIdentity), 0o600) }
 
-// fresh forgets the cached session lookup, like a new kc-env process.
+// fresh forgets the cached session lookup, like a new se-env process.
 func fresh(a *app) *app { a.sess, a.sessChecked = nil, false; return a }
 
 // startAgent runs a session agent in this process for the tree rooted at root.
@@ -296,7 +296,7 @@ func TestIdentityIsRestricted(t *testing.T) {
 	}
 }
 
-// A stray recipient.txt (kc-env <= 0.4 trusted it) must have no effect:
+// A stray recipient.txt (se-env <= 0.4 trusted it) must have no effect:
 // profiles are encrypted to the key derived from identity.txt only.
 func TestRecipientFileIsIgnored(t *testing.T) {
 	a := testApp(t)
@@ -317,7 +317,7 @@ func TestRecipientFileIsIgnored(t *testing.T) {
 func TestProfileRejectsUnsafeContent(t *testing.T) {
 	b64 := "dg==" // "v"
 	for _, bad := range []string{"PATH=" + b64, "DYLD_INSERT_LIBRARIES=" + b64, "LD_PRELOAD=" + b64,
-		"NODE_OPTIONS=" + b64, "KC_ENV_SESSION=" + b64, "=" + b64, "A B=" + b64, "A=" + b64 + "\nA=" + b64,
+		"NODE_OPTIONS=" + b64, "SE_ENV_SESSION=" + b64, "=" + b64, "A B=" + b64, "A=" + b64 + "\nA=" + b64,
 		"A=AA=="} { // AA== decodes to a NUL byte
 		if _, err := parseProfile([]byte(bad + "\n")); err == nil {
 			t.Errorf("parseProfile accepted %q", bad)
@@ -326,7 +326,7 @@ func TestProfileRejectsUnsafeContent(t *testing.T) {
 	if kv, err := parseProfileOpt([]byte("PATH="+b64+"\nOK="+b64+"\n"), true); err != nil || len(kv) != 2 {
 		t.Errorf("lenient parse (used by rm): %v %v", kv, err)
 	}
-	for _, k := range []string{"PATH", "HOME", "DYLD_X", "LD_X", "KC_ENV_X", "BASH_ENV", "NODE_OPTIONS"} {
+	for _, k := range []string{"PATH", "HOME", "DYLD_X", "LD_X", "SE_ENV_X", "BASH_ENV", "NODE_OPTIONS"} {
 		if !unsafeKey(k) {
 			t.Errorf("unsafeKey(%q) = false", k)
 		}
@@ -420,7 +420,7 @@ func TestSessionCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	ag := startAgent(t, a, time.Minute, []string{"work"}, os.Getpid())
-	t.Setenv("KC_ENV_SESSION", ag.id)
+	t.Setenv("SE_ENV_SESSION", ag.id)
 
 	if s := fresh(a).activeSession(); s == nil || !reflect.DeepEqual(s.info.Only, []string{"work"}) {
 		t.Fatalf("activeSession: %+v", s)
@@ -450,7 +450,7 @@ func TestSessionCache(t *testing.T) {
 	if _, err := fresh(a).loadFresh("work", true); err == nil {
 		t.Fatal("loadFresh used the session")
 	}
-	// A save through kc-env refreshes the entry...
+	// A save through se-env refreshes the entry...
 	os.WriteFile(a.identityPath, main, 0o600)
 	if err := fresh(a).save("work", map[string]string{"K": "v2"}); err != nil {
 		t.Fatal(err)
@@ -474,7 +474,7 @@ func TestSessionCache(t *testing.T) {
 func TestSaveDoesNotSeedCache(t *testing.T) {
 	a := testApp(t)
 	ag := startAgent(t, a, time.Minute, nil, os.Getpid())
-	t.Setenv("KC_ENV_SESSION", ag.id)
+	t.Setenv("SE_ENV_SESSION", ag.id)
 	if err := fresh(a).save("work", map[string]string{"K": "v"}); err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +487,7 @@ func TestSessionLockAndEnd(t *testing.T) {
 	a := testApp(t)
 	a.save("work", map[string]string{"K": "v"})
 	ag := startAgent(t, a, time.Minute, nil, os.Getpid())
-	t.Setenv("KC_ENV_SESSION", ag.id)
+	t.Setenv("SE_ENV_SESSION", ag.id)
 	fresh(a).load("work")
 	if err := fresh(a).cmdLock(); err != nil {
 		t.Fatal(err)
@@ -513,7 +513,7 @@ func TestSessionExpires(t *testing.T) {
 	a := testApp(t)
 	a.save("work", map[string]string{"K": "v"})
 	ag := startAgent(t, a, time.Second, nil, os.Getpid())
-	t.Setenv("KC_ENV_SESSION", ag.id)
+	t.Setenv("SE_ENV_SESSION", ag.id)
 	fresh(a).load("work")
 	breakMainKey(a)
 	if _, err := fresh(a).load("work"); err != nil {
@@ -529,7 +529,7 @@ func TestSessionExpires(t *testing.T) {
 }
 
 // A process that is not under the session's command gets nothing, whatever
-// KC_ENV_SESSION says. Here the "command" is a pid this test does not descend from.
+// SE_ENV_SESSION says. Here the "command" is a pid this test does not descend from.
 func TestSessionRefusesOutsiders(t *testing.T) {
 	a := testApp(t)
 	a.save("work", map[string]string{"K": "v"})
@@ -540,7 +540,7 @@ func TestSessionRefusesOutsiders(t *testing.T) {
 	defer sleeper.Process.Kill()
 	ag := startAgent(t, a, time.Minute, nil, sleeper.Process.Pid)
 	ag.store("work", strings.Repeat("0", 64), []byte("K=dg==\n"), false) // pretend it is cached
-	t.Setenv("KC_ENV_SESSION", ag.id)
+	t.Setenv("SE_ENV_SESSION", ag.id)
 	if fresh(a).activeSession() != nil {
 		t.Fatal("an outsider was treated as a member")
 	}
@@ -598,7 +598,7 @@ func TestLookAlikeAgentIsNotTrusted(t *testing.T) {
 	os.MkdirAll(a.runDir, 0o700)
 	id := "00000000deadbeef"
 	fake := exec.Command(os.Args[0])
-	fake.Env = append(os.Environ(), "KC_ENV_TEST_FAKE_AGENT="+a.sockPath(id))
+	fake.Env = append(os.Environ(), "SE_ENV_TEST_FAKE_AGENT="+a.sockPath(id))
 	if err := fake.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -609,7 +609,7 @@ func TestLookAlikeAgentIsNotTrusted(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Setenv("KC_ENV_SESSION", id)
+	t.Setenv("SE_ENV_SESSION", id)
 	if fresh(a).activeSession() != nil {
 		t.Fatal("a look-alike agent was accepted as this process's session")
 	}
@@ -629,11 +629,11 @@ func TestLookAlikeAgentIsNotTrusted(t *testing.T) {
 	}
 }
 
-// kc runs the test binary as kc-env with the given home.
-func kc(t *testing.T, a *app, env []string, stdin string, args ...string) (string, string, int) {
+// se runs the test binary as se-env with the given home.
+func se(t *testing.T, a *app, env []string, stdin string, args ...string) (string, string, int) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], args...)
-	cmd.Env = append(os.Environ(), "KC_ENV_TEST_HOME="+a.home, "KC_ENV_BIN="+os.Args[0])
+	cmd.Env = append(os.Environ(), "SE_ENV_TEST_HOME="+a.home, "SE_ENV_BIN="+os.Args[0])
 	cmd.Env = append(cmd.Env, env...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
@@ -656,26 +656,26 @@ func kc(t *testing.T, a *app, env []string, stdin string, args ...string) (strin
 func TestSessionEndToEnd(t *testing.T) {
 	a := testApp(t)
 	for _, c := range [][]string{{"prod", "K", "REAL"}, {"other", "T", "OTHER"}} {
-		if _, e, code := kc(t, a, nil, c[2], "set", c[0], c[1]); code != 0 {
+		if _, e, code := se(t, a, nil, c[2], "set", c[0], c[1]); code != 0 {
 			t.Fatalf("set: %s", e)
 		}
 	}
 	os.WriteFile(filepath.Join(a.home, "bogus"), []byte(bogusIdentity), 0o600)
 	script := `
-"$KC_ENV_BIN" get prod K >/dev/null || exit 10            # decrypts and fills the session
-cp "$KC_ENV_TEST_HOME/bogus" "$KC_ENV_TEST_HOME/identity.txt"   # main key gone
-[ "$("$KC_ENV_BIN" get prod K)" = REAL ] || exit 11       # served by the session
-"$KC_ENV_BIN" get other T >/dev/null 2>&1 && exit 12      # outside --only
-"$KC_ENV_BIN" exec prod -- /bin/sh -c '[ "$K" = REAL ]' || exit 13
-touch "$KC_ENV_TEST_HOME/ready"
-i=0; while [ ! -e "$KC_ENV_TEST_HOME/go" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
-[ "$("$KC_ENV_BIN" get prod K)" = REAL ] || exit 14       # the outsider changed nothing
-(sleep 0.3; "$KC_ENV_BIN" get prod K > "$KC_ENV_TEST_HOME/late" 2>/dev/null) &   # outlives the command
+"$SE_ENV_BIN" get prod K >/dev/null || exit 10            # decrypts and fills the session
+cp "$SE_ENV_TEST_HOME/bogus" "$SE_ENV_TEST_HOME/identity.txt"   # main key gone
+[ "$("$SE_ENV_BIN" get prod K)" = REAL ] || exit 11       # served by the session
+"$SE_ENV_BIN" get other T >/dev/null 2>&1 && exit 12      # outside --only
+"$SE_ENV_BIN" exec prod -- /bin/sh -c '[ "$K" = REAL ]' || exit 13
+touch "$SE_ENV_TEST_HOME/ready"
+i=0; while [ ! -e "$SE_ENV_TEST_HOME/go" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
+[ "$("$SE_ENV_BIN" get prod K)" = REAL ] || exit 14       # the outsider changed nothing
+(sleep 0.3; "$SE_ENV_BIN" get prod K > "$SE_ENV_TEST_HOME/late" 2>/dev/null) &   # outlives the command
 exit 0`
 	done := make(chan int, 1)
 	var sessErr string
 	go func() {
-		_, e, code := kc(t, a, nil, "", "session", "--only", "prod", "--ttl", "1m", "--", "/bin/sh", "-c", script)
+		_, e, code := se(t, a, nil, "", "session", "--only", "prod", "--ttl", "1m", "--", "/bin/sh", "-c", script)
 		sessErr = e
 		done <- code
 	}()
@@ -692,23 +692,23 @@ exit 0`
 	}
 	id := strings.TrimSuffix(filepath.Base(socks[0]), ".sock")
 	// Same user, right session ID, but not started under the session's command.
-	if out, _, code := kc(t, a, []string{"KC_ENV_SESSION=" + id}, "", "get", "prod", "K"); code == 0 {
+	if out, _, code := se(t, a, []string{"SE_ENV_SESSION=" + id}, "", "get", "prod", "K"); code == 0 {
 		t.Errorf("an outside process read the secret from the session: %q", out)
 	}
-	// The same, speaking to the agent directly instead of through kc-env.
+	// The same, speaking to the agent directly instead of through se-env.
 	for _, rq := range []request{{Op: "acquire", Profile: "prod"},
 		{Op: "put", Profile: "prod", Sum: strings.Repeat("0", 64), Data: []byte("K=eA==\n")}} {
 		if rs, err := ask(socks[0], rq, false); err != nil || rs.OK || rs.Hit || len(rs.Data) != 0 {
 			t.Errorf("%s sent straight to the agent from outside: %+v %v", rq.Op, rs, err)
 		}
 	}
-	if out, _, _ := kc(t, a, []string{"KC_ENV_SESSION=" + id}, "", "cache"); !strings.Contains(out, "outside") {
+	if out, _, _ := se(t, a, []string{"SE_ENV_SESSION=" + id}, "", "cache"); !strings.Contains(out, "outside") {
 		t.Errorf("an outside process was told it is in the session: %q", out)
 	}
-	if out, _, _ := kc(t, a, nil, "", "cache", "list"); !strings.Contains(out, id[:8]) || !strings.Contains(out, "prod") {
+	if out, _, _ := se(t, a, nil, "", "cache", "list"); !strings.Contains(out, id[:8]) || !strings.Contains(out, "prod") {
 		t.Errorf("cache list: %q", out)
 	}
-	if out, _, code := kc(t, a, nil, "", "__complete", "sessions"); code != 0 || !strings.HasPrefix(out, id[:8]+":") {
+	if out, _, code := se(t, a, nil, "", "__complete", "sessions"); code != 0 || !strings.HasPrefix(out, id[:8]+":") {
 		t.Errorf("__complete sessions: %q", out)
 	}
 	os.WriteFile(filepath.Join(a.home, "go"), nil, 0o600)
@@ -729,37 +729,37 @@ exit 0`
 // The TTL is enforced by the agent: there is no file a process could edit.
 func TestSessionTTLEndToEnd(t *testing.T) {
 	a := testApp(t)
-	kc(t, a, nil, "REAL", "set", "prod", "K")
+	se(t, a, nil, "REAL", "set", "prod", "K")
 	os.WriteFile(filepath.Join(a.home, "bogus"), []byte(bogusIdentity), 0o600)
 	script := `
-"$KC_ENV_BIN" get prod K >/dev/null || exit 10
-cp "$KC_ENV_TEST_HOME/bogus" "$KC_ENV_TEST_HOME/identity.txt"
-"$KC_ENV_BIN" get prod K >/dev/null || exit 11
+"$SE_ENV_BIN" get prod K >/dev/null || exit 10
+cp "$SE_ENV_TEST_HOME/bogus" "$SE_ENV_TEST_HOME/identity.txt"
+"$SE_ENV_BIN" get prod K >/dev/null || exit 11
 sleep 2.5
-"$KC_ENV_BIN" get prod K >/dev/null 2>&1 && exit 12
+"$SE_ENV_BIN" get prod K >/dev/null 2>&1 && exit 12
 exit 0`
-	if _, e, code := kc(t, a, nil, "", "session", "--ttl", "2s", "--", "/bin/sh", "-c", script); code != 0 {
+	if _, e, code := se(t, a, nil, "", "session", "--ttl", "2s", "--", "/bin/sh", "-c", script); code != 0 {
 		t.Fatalf("step %d: %s", code, e)
 	}
 }
 
 func TestCLIRefusals(t *testing.T) {
 	a := testApp(t)
-	if _, e, code := kc(t, a, nil, "x", "set", "prod", "DYLD_INSERT_LIBRARIES"); code == 0 || !strings.Contains(e, "refused") {
+	if _, e, code := se(t, a, nil, "x", "set", "prod", "DYLD_INSERT_LIBRARIES"); code == 0 || !strings.Contains(e, "refused") {
 		t.Errorf("set of an unsafe key: %d %q", code, e)
 	}
-	if _, e, code := kc(t, a, nil, "a\x00b", "set", "prod", "K"); code == 0 || !strings.Contains(e, "NUL") {
+	if _, e, code := se(t, a, nil, "a\x00b", "set", "prod", "K"); code == 0 || !strings.Contains(e, "NUL") {
 		t.Errorf("set of a NUL value: %d %q", code, e)
 	}
-	if _, e, code := kc(t, a, nil, "", "session", "--ttl", "999999999999999d", "--", "/usr/bin/true"); code == 0 || !strings.Contains(e, "--ttl") {
+	if _, e, code := se(t, a, nil, "", "session", "--ttl", "999999999999999d", "--", "/usr/bin/true"); code == 0 || !strings.Contains(e, "--ttl") {
 		t.Errorf("huge ttl: %d %q", code, e)
 	}
-	kc(t, a, nil, "v", "set", "prod", "K")
+	se(t, a, nil, "v", "set", "prod", "K")
 	breakMainKey(a) // rm must need the main key
-	if _, _, code := kc(t, a, nil, "", "rm", "prod", "K"); code == 0 {
+	if _, _, code := se(t, a, nil, "", "rm", "prod", "K"); code == 0 {
 		t.Error("rm worked without the main key")
 	}
-	if out, _, _ := kc(t, a, nil, "", "ls", "prod"); strings.TrimSpace(out) != "K" {
+	if out, _, _ := se(t, a, nil, "", "ls", "prod"); strings.TrimSpace(out) != "K" {
 		t.Errorf("keys after refused rm: %q", out)
 	}
 }
@@ -785,7 +785,7 @@ func TestPublicRoundTrip(t *testing.T) {
 	if len(publicCopyOf(kv, nil)) != 0 {
 		t.Fatal("a profile without public keys has a non-empty copy")
 	}
-	// A profile without public keys is byte-for-byte the format of kc-env 0.5.
+	// A profile without public keys is byte-for-byte the format of se-env 0.5.
 	if string(serializeProfile(kv, nil)) != string(serialize(kv)) {
 		t.Fatal("format changed for profiles without public keys")
 	}
@@ -899,19 +899,19 @@ func base64Std(s string) string { return base64.StdEncoding.EncodeToString([]byt
 // `ls --verify` shows the difference and repairs the copy.
 func TestPublicTamperingCLI(t *testing.T) {
 	a := testApp(t)
-	if _, e, code := kc(t, a, nil, "s3cret", "set", "work", "TOKEN"); code != 0 {
+	if _, e, code := se(t, a, nil, "s3cret", "set", "work", "TOKEN"); code != 0 {
 		t.Fatalf("set: %s", e)
 	}
-	if _, e, code := kc(t, a, nil, "", "set", "--public", "work", "URL", "https://example.com"); code != 0 || !strings.Contains(e, "public") {
+	if _, e, code := se(t, a, nil, "", "set", "--public", "work", "URL", "https://example.com"); code != 0 || !strings.Contains(e, "public") {
 		t.Fatalf("set --public: %d %s", code, e)
 	}
-	if out, _, _ := kc(t, a, nil, "", "ls", "work"); out != "TOKEN\nURL=https://example.com\n" {
+	if out, _, _ := se(t, a, nil, "", "ls", "work"); out != "TOKEN\nURL=https://example.com\n" {
 		t.Fatalf("ls: %q", out)
 	}
-	if out, _, _ := kc(t, a, nil, "", "list"); !strings.Contains(out, "URL = https://example.com") || strings.Contains(out, "s3cret") {
+	if out, _, _ := se(t, a, nil, "", "list"); !strings.Contains(out, "URL = https://example.com") || strings.Contains(out, "s3cret") {
 		t.Fatalf("list: %q", out)
 	}
-	if out, _, code := kc(t, a, nil, "", "exec", "work", "--", "/bin/sh", "-c", `printf %s "$URL|$TOKEN"`); code != 0 || out != "https://example.com|s3cret" {
+	if out, _, code := se(t, a, nil, "", "exec", "work", "--", "/bin/sh", "-c", `printf %s "$URL|$TOKEN"`); code != 0 || out != "https://example.com|s3cret" {
 		t.Fatalf("exec: %d %q", code, out)
 	}
 
@@ -924,13 +924,13 @@ func TestPublicTamperingCLI(t *testing.T) {
 		{"header", "work", "TOKEN"},
 		{"rm", "work", "TOKEN"},
 	} {
-		out, e, code := kc(t, a, nil, "", args...)
+		out, e, code := se(t, a, nil, "", args...)
 		if code != exitTampered || out != "" || !strings.Contains(e, "WARNING") || !strings.Contains(e, "URL") ||
 			!strings.Contains(e, "ls --verify work") || strings.Contains(e, "s3cret") {
 			t.Errorf("%v: exit=%d stdout=%q stderr=%q", args, code, out, e)
 		}
 	}
-	if _, e, code := kc(t, a, nil, "new", "set", "work", "OTHER"); code != exitTampered {
+	if _, e, code := se(t, a, nil, "new", "set", "work", "OTHER"); code != exitTampered {
 		t.Errorf("set on a tampered profile: %d %s", code, e)
 	}
 	if exists(marker) {
@@ -940,19 +940,19 @@ func TestPublicTamperingCLI(t *testing.T) {
 		t.Fatalf("alerts: %q", got)
 	}
 	// Still listed (from the copy, unverified) — and still stopped at the next use.
-	if out, _, _ := kc(t, a, nil, "", "ls", "work"); !strings.Contains(out, "URL=https://evil.example") {
+	if out, _, _ := se(t, a, nil, "", "ls", "work"); !strings.Contains(out, "URL=https://evil.example") {
 		t.Fatalf("ls shows the copy: %q", out)
 	}
 
-	out, e, code := kc(t, a, nil, "", "ls", "--verify", "work")
+	out, e, code := se(t, a, nil, "", "ls", "--verify", "work")
 	if code != 0 || out != "TOKEN\nURL=https://example.com\n" ||
 		!strings.Contains(e, "https://evil.example") || !strings.Contains(e, "https://example.com") {
 		t.Fatalf("ls --verify: %d %q %q", code, out, e)
 	}
-	if out, _, code := kc(t, a, nil, "", "exec", "work", "--", "/bin/sh", "-c", `printf %s "$URL"`); code != 0 || out != "https://example.com" {
+	if out, _, code := se(t, a, nil, "", "exec", "work", "--", "/bin/sh", "-c", `printf %s "$URL"`); code != 0 || out != "https://example.com" {
 		t.Fatalf("exec after repair: %d %q", code, out)
 	}
-	if _, e, _ := kc(t, a, nil, "", "ls", "--verify", "work"); strings.Contains(e, "did not match") {
+	if _, e, _ := se(t, a, nil, "", "ls", "--verify", "work"); strings.Contains(e, "did not match") {
 		t.Errorf("a second ls --verify still reports a difference: %q", e)
 	}
 }
@@ -960,37 +960,37 @@ func TestPublicTamperingCLI(t *testing.T) {
 func TestSetPublicCLI(t *testing.T) {
 	a := testApp(t)
 	// A secret is never accepted on the command line.
-	if _, e, code := kc(t, a, nil, "", "set", "work", "TOKEN", "on-the-command-line"); code == 0 || !strings.Contains(e, "usage") {
+	if _, e, code := se(t, a, nil, "", "set", "work", "TOKEN", "on-the-command-line"); code == 0 || !strings.Contains(e, "usage") {
 		t.Errorf("secret as an argument: %d %q", code, e)
 	}
 	for _, bad := range []string{"two\nlines", "bell\a", ""} {
-		if _, _, code := kc(t, a, nil, "", "set", "--public", "work", "URL", bad); code == 0 {
+		if _, _, code := se(t, a, nil, "", "set", "--public", "work", "URL", bad); code == 0 {
 			t.Errorf("public value %q was accepted", bad)
 		}
 	}
-	if _, e, code := kc(t, a, nil, "", "set", "--public", "work", "PATH", "/x"); code == 0 || !strings.Contains(e, "refused") {
+	if _, e, code := se(t, a, nil, "", "set", "--public", "work", "PATH", "/x"); code == 0 || !strings.Contains(e, "refused") {
 		t.Errorf("public PATH: %d %q", code, e)
 	}
 	if exists(a.profileFile("work")) {
 		t.Fatal("a refused set created the profile")
 	}
 	// From standard input, like a secret.
-	if _, e, code := kc(t, a, nil, "eu-west-1", "set", "--public", "work", "REGION"); code != 0 {
+	if _, e, code := se(t, a, nil, "eu-west-1", "set", "--public", "work", "REGION"); code != 0 {
 		t.Fatalf("set --public from stdin: %s", e)
 	}
-	kc(t, a, nil, "", "set", "--public", "work", "URL", "https://example.com")
-	kc(t, a, nil, "tok", "set", "work", "TOKEN")
-	if out, _, _ := kc(t, a, nil, "", "ls", "work"); out != "REGION=eu-west-1\nTOKEN\nURL=https://example.com\n" {
+	se(t, a, nil, "", "set", "--public", "work", "URL", "https://example.com")
+	se(t, a, nil, "tok", "set", "work", "TOKEN")
+	if out, _, _ := se(t, a, nil, "", "ls", "work"); out != "REGION=eu-west-1\nTOKEN\nURL=https://example.com\n" {
 		t.Fatalf("ls: %q", out)
 	}
 	// Setting it again without --public makes it a secret: gone from the copy.
-	kc(t, a, nil, "now-secret", "set", "work", "REGION")
+	se(t, a, nil, "now-secret", "set", "work", "REGION")
 	cp, _ := os.ReadFile(a.publicFile("work"))
-	if out, _, _ := kc(t, a, nil, "", "ls", "work"); out != "REGION\nTOKEN\nURL=https://example.com\n" || strings.Contains(string(cp), "REGION") {
+	if out, _, _ := se(t, a, nil, "", "ls", "work"); out != "REGION\nTOKEN\nURL=https://example.com\n" || strings.Contains(string(cp), "REGION") {
 		t.Fatalf("after re-set as a secret: %q / %q", out, cp)
 	}
 	// rm of a public key updates the copy; rm --all and rm-profile remove it.
-	if _, e, code := kc(t, a, nil, "", "rm", "work", "URL"); code != 0 {
+	if _, e, code := se(t, a, nil, "", "rm", "work", "URL"); code != 0 {
 		t.Fatalf("rm: %s", e)
 	}
 	if exists(a.publicFile("work")) {
@@ -1002,7 +1002,7 @@ func TestSetPublicCLI(t *testing.T) {
 }
 
 // Inside a session a cached profile is checked against the copy on every
-// use, and a save by kc-env is never mistaken for tampering.
+// use, and a save by se-env is never mistaken for tampering.
 func TestPublicValuesInSession(t *testing.T) {
 	a := testApp(t)
 	kv := map[string]string{"URL": "https://example.com", "TOKEN": "s3cret"}
@@ -1011,7 +1011,7 @@ func TestPublicValuesInSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	ag := startAgent(t, a, time.Minute, nil, os.Getpid())
-	t.Setenv("KC_ENV_SESSION", ag.id)
+	t.Setenv("SE_ENV_SESSION", ag.id)
 	if _, _, err := fresh(a).loadProfile("work"); err != nil {
 		t.Fatal(err)
 	}
@@ -1030,7 +1030,7 @@ func TestPublicValuesInSession(t *testing.T) {
 	if _, _, err := fresh(a).loadProfile("work"); err != nil {
 		t.Fatalf("restored copy: %v", err)
 	}
-	// A save through kc-env changes the vault file, the copy and the cache together.
+	// A save through se-env changes the vault file, the copy and the cache together.
 	os.WriteFile(a.identityPath, main, 0o600)
 	kv["URL"] = "https://example.org"
 	if err := fresh(a).saveProfile("work", kv, pub); err != nil {
