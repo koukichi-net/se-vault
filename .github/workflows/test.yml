@@ -1,0 +1,54 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: test
+    # kc-env is macOS only (Secure Enclave, LOCAL_PEERCRED, osascript).
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      # Same settings as docs/build.md: no toolchain download, no go.mod edits.
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Verify modules
+        run: go mod download && go mod verify
+
+      - name: Check formatting
+        run: |
+          files=$(gofmt -l cmd)
+          if [ -n "$files" ]; then
+            echo "gofmt needs to be run on:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Build
+        run: go build -trimpath -o bin/kc-env ./cmd/kc-env
