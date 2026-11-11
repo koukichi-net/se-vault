@@ -55,6 +55,24 @@ se-env init                   # Secure Enclave の鍵を作る（最初の1回�
 
 ホームは常に、シンボリックリンクを解決した「`bin/se-env` の1つ上のディレクトリ」です。後でホームを移動しても、張り直すのはリンクだけで、設定の変更は要りません。環境変数でホームを変えることはできません。また、ホーム、プログラム、鍵のファイルに自分以外が書き込める場合、se-env は動作を止めます。ホームのパスは77文字以内にしてください。セッションはホームの中に Unix ソケットを作り、macOS ではソケットのパスが104バイトまでに制限されているためです。
 
+### リリース版のバイナリ
+
+GitHub Actions でビルドした se-env を、[リリースのページ](https://github.com/koukichi-net/se-vault/releases)に置いています（Apple シリコン用）。自分で `go build` する代わりに使えます。
+
+- バージョン名（`vX.Y.Z`）のリリースが、正式なアップデートです。
+- `snapshot` は、`main` に push されるたびに作り直されます。テスト用のプレリリースで、正式なアップデートではありません。
+
+```sh
+TAG=vX.Y.Z   # 使いたいバージョン
+gh release download "$TAG" --repo koukichi-net/se-vault --pattern '*.tar.gz'
+gh attestation verify "se-env-$TAG-darwin-arm64.tar.gz" --repo koukichi-net/se-vault
+tar -xzf "se-env-$TAG-darwin-arm64.tar.gz"
+```
+
+`gh attestation verify` は、そのファイルがこのリポジトリのワークフローでビルドされたものかを確かめます。アーカイブには `bin/se-env` と `completions/` が、ホームと同じ配置で入っています。age-plugin-se は入っていません。[docs/build.ja.md](docs/build.ja.md) の手順でビルドして、同じ `bin/` に置いてください。
+
+バイナリには Apple の Developer ID による署名がありません。ブラウザでダウンロードすると macOS が隔離の印を付け、印を外すまで起動できません（`xattr -d com.apple.quarantine <ファイル>`）。`gh` や `curl` でダウンロードした場合は、隔離されません。
+
 ### シェルの設定（任意）
 
 Tab 補完を使うには、`~/.zshrc` の compinit より**前**（oh-my-zsh なら `source $ZSH/oh-my-zsh.sh` より前）に次を追加します。

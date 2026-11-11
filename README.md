@@ -55,6 +55,24 @@ se-env init                   # create the Secure Enclave key (once)
 
 The home is always "the directory above `bin/se-env`", resolved through symlinks, so you can move it later without changing any configuration. Only the symlink needs to be updated. The home cannot be redirected through an environment variable, and se-env stops if the home, the programs or the key file are writable by anyone but you. Keep the home's path at 77 characters or fewer: sessions use a Unix socket inside it, and macOS limits socket paths to 104 bytes.
 
+### Release builds
+
+se-env built by GitHub Actions is on the [releases page](https://github.com/koukichi-net/se-vault/releases), for Apple silicon. You can use it instead of running `go build` yourself.
+
+- A release named after a version (`vX.Y.Z`) is an official update.
+- `snapshot` is rebuilt on every push to `main`. It is a pre-release for testing, not an official update.
+
+```sh
+TAG=vX.Y.Z   # the version you want
+gh release download "$TAG" --repo koukichi-net/se-vault --pattern '*.tar.gz'
+gh attestation verify "se-env-$TAG-darwin-arm64.tar.gz" --repo koukichi-net/se-vault
+tar -xzf "se-env-$TAG-darwin-arm64.tar.gz"
+```
+
+`gh attestation verify` checks that the file was built by this repository's workflow. The archive holds `bin/se-env` and `completions/`, laid out like the home. It does not contain age-plugin-se: build that as described in [docs/build.md](docs/build.md) and put it in `bin/` as well.
+
+The binary is not signed with an Apple Developer ID. If you download the archive with a browser, macOS quarantines it and refuses to start the program until you remove the mark (`xattr -d com.apple.quarantine <file>`). Downloads made with `gh` or `curl` are not quarantined.
+
 ### Shell setup (optional)
 
 For Tab completion, add this to `~/.zshrc` **before** compinit (with oh-my-zsh: before `source $ZSH/oh-my-zsh.sh`):

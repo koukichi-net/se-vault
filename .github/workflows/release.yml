@@ -1,0 +1,204 @@
+name: release
+
+# - Push to main:   rebuilds the "snapshot" pre-release (for testing).
+# - Push of a tag vX.Y.Z: publishes the official release for that version.
+# - Pull request that changes this file: builds only, publishes nothing.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    paths: ['.github/workflows/release.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Runs the repository's code (tests, build) with a read-only token.
+  build:
+    name: build
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      # Same settings as docs/build.md: no toolchain download, no go.mod edits.
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+    outputs:
+      label: ${{ steps.meta.outputs.label }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Decide what to build
+        id: meta
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^const version = "\(.*\)"$/\1/p' cmd/se-env/main.go)
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::cannot read the version from cmd/se-env/main.go"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match the version in the source (v$version)"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::the tagged commit is not on main"
+              exit 1
+            fi
+            label=$GITHUB_REF_NAME
+          else
+            label=snapshot
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+
+      - name: Verify modules
+        run: go mod download && go mod verify
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Build and package
+        env:
+          LABEL: ${{ steps.meta.outputs.label }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/dist
+          # Apple silicon only.
+          name="se-env-$LABEL-darwin-arm64"
+          root="stage/$name"
+          mkdir -p "$root/bin" "$root/completions" "$root/licenses/go"
+          GOOS=darwin GOARCH=arm64 go build -trimpath -o "$root/bin/se-env" ./cmd/se-env
+          install -m 644 completions/_se-env "$root/completions/"
+          install -m 644 LICENSE README.md README.ja.md "$root/"
+          # Licenses of everything that is linked into the binary.
+          if [ ! -f "$(go env GOROOT)/LICENSE" ]; then
+            echo "::error::the Go distribution has no LICENSE file"
+            exit 1
+          fi
+          install -m 644 "$(go env GOROOT)/LICENSE" "$root/licenses/go/"
+          GOOS=darwin GOARCH=arm64 go list -deps -f '{{with .Module}}{{if .Version}}{{.Path}} {{.Dir}}{{end}}{{end}}' ./cmd/se-env |
+            sort -u | while read -r mod dir; do
+              found=0
+              for f in "$dir"/LICENSE* "$dir"/COPYING* "$dir"/NOTICE* "$dir"/PATENTS*; do
+                [ -f "$f" ] || continue
+                mkdir -p "$root/licenses/$mod"
+                install -m 644 "$f" "$root/licenses/$mod/"
+                found=1
+              done
+              if [ "$found" = 0 ]; then
+                echo "::error::no license file found for $mod"
+                exit 1
+              fi
+            done
+          tar -C stage -czf "out/dist/$name.tar.gz" "$name"
+
+          # Smoke test: the runner is arm64 too.
+          built=$("$root/bin/se-env" version)
+          echo "$built"
+          case "$built" in
+            "se-env $VERSION "*) ;;
+            *) echo "::error::the built binary reports an unexpected version"; exit 1 ;;
+          esac
+
+          (cd out/dist && shasum -a 256 *.tar.gz > SHA256SUMS && cat SHA256SUMS)
+
+          {
+            if [ "$LABEL" = snapshot ]; then
+              echo "Automated build of \`main\` at ${GITHUB_SHA}. It reports version $VERSION, but it is **not an official release**: it is replaced on every push to \`main\`. Use a tagged version unless you want to test the latest changes."
+            else
+              echo "Official release of se-env $VERSION."
+            fi
+            echo
+            echo "Built by GitHub Actions with $(go version | cut -d' ' -f3) from commit ${GITHUB_SHA}."
+            echo
+            echo '### Install'
+            echo
+            echo '```sh'
+            echo "gh release download $LABEL --repo $GITHUB_REPOSITORY --pattern '*.tar.gz'"
+            echo "gh attestation verify se-env-$LABEL-darwin-arm64.tar.gz --repo $GITHUB_REPOSITORY"
+            echo "tar -xzf se-env-$LABEL-darwin-arm64.tar.gz"
+            echo '```'
+            echo
+            echo 'The archive holds `bin/se-env` and `completions/`. age-plugin-se is not included: build it as described in `docs/build.md`. See the README for the rest of the installation.'
+          } > out/notes.md
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Holds the write token. Runs no code from the repository: it only attests
+  # and publishes the files that the build job produced.
+  publish:
+    name: publish
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LABEL: ${{ needs.build.outputs.label }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: out
+
+      - name: Check the files
+        working-directory: out/dist
+        run: sha256sum --check SHA256SUMS
+
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: out/dist/*.tar.gz
+
+      - name: Publish
+        working-directory: out/dist
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            gh release create "$LABEL" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "se-env $VERSION" --notes-file ../notes.md --generate-notes \
+              *.tar.gz SHA256SUMS
+          else
+            # The snapshot is a moving pre-release: remove the old one, then
+            # create it again at the new commit.
+            if gh release view snapshot --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              gh release delete snapshot --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            fi
+            gh release create snapshot --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --prerelease --latest=false \
+              --title "Snapshot of main (${GITHUB_SHA:0:7})" --notes-file ../notes.md \
+              *.tar.gz SHA256SUMS
+            at=$(gh api "repos/$GITHUB_REPOSITORY/commits/snapshot" --jq .sha)
+            if [ "$at" != "$GITHUB_SHA" ]; then
+              echo "::error::the snapshot tag points to $at, not to $GITHUB_SHA"
+              exit 1
+            fi
+          fi
