@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -240,9 +241,20 @@ type unsafeKeyError struct{ key string }
 
 func (e *unsafeKeyError) Error() string { return "unsafe key name: " + e.key }
 
-func serialize(kv map[string]string) []byte {
+// publicMark starts the line of a key whose value is not a secret (set with
+// `set --public`). The mark lives inside the encrypted profile, so which keys
+// are public, and their values, are covered by the same encryption as the
+// secrets.
+const publicMark = "+"
+
+func serialize(kv map[string]string) []byte { return serializeProfile(kv, nil) }
+
+func serializeProfile(kv map[string]string, pub map[string]bool) []byte {
 	var b strings.Builder
 	for _, k := range sortedKeys(kv) {
+		if pub[k] {
+			b.WriteString(publicMark)
+		}
 		b.WriteString(k)
 		b.WriteByte('=')
 		b.WriteString(base64.StdEncoding.EncodeToString([]byte(kv[k])))
@@ -253,34 +265,58 @@ func serialize(kv map[string]string) []byte {
 
 func parseProfile(plain []byte) (map[string]string, error) { return parseProfileOpt(plain, false) }
 
-// parseProfileOpt parses a decrypted profile. allowUnsafe keeps refused key
-// names, which `rm` needs in order to remove them.
 func parseProfileOpt(plain []byte, allowUnsafe bool) (map[string]string, error) {
-	kv := map[string]string{}
+	kv, _, err := parseProfileFull(plain, allowUnsafe)
+	return kv, err
+}
+
+// parseProfileFull parses a decrypted profile into its values and the set of
+// public keys. allowUnsafe keeps refused key names, which `rm` needs in order
+// to remove them.
+func parseProfileFull(plain []byte, allowUnsafe bool) (map[string]string, map[string]bool, error) {
+	kv, pub := map[string]string{}, map[string]bool{}
 	for _, l := range strings.Split(string(plain), "\n") {
 		if l == "" {
 			continue
 		}
+		isPublic := strings.HasPrefix(l, publicMark)
+		l = strings.TrimPrefix(l, publicMark)
 		k, v, ok := strings.Cut(l, "=")
 		if !ok || !reKey.MatchString(k) {
-			return nil, errors.New("malformed line")
+			return nil, nil, errors.New("malformed line")
 		}
 		if !allowUnsafe && unsafeKey(k) {
-			return nil, &unsafeKeyError{k}
+			return nil, nil, &unsafeKeyError{k}
 		}
 		if _, dup := kv[k]; dup {
-			return nil, errors.New("duplicate key")
+			return nil, nil, errors.New("duplicate key")
 		}
 		dec, err := base64.StdEncoding.DecodeString(v)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if bytes.IndexByte(dec, 0) >= 0 {
-			return nil, errors.New("NUL in value")
+			return nil, nil, errors.New("NUL in value")
 		}
 		kv[k] = string(dec)
+		if isPublic {
+			pub[k] = true
+		}
 	}
-	return kv, nil
+	return kv, pub, nil
+}
+
+// publicCopyOf is what vault/<profile>.public must contain for a profile: the
+// public keys and their values, in the same line format, sorted. Empty when
+// the profile has no public key (then the file does not exist).
+func publicCopyOf(kv map[string]string, pub map[string]bool) []byte {
+	sub := map[string]string{}
+	for k, v := range kv {
+		if pub[k] {
+			sub[k] = v
+		}
+	}
+	return serialize(sub)
 }
 
 func sortedKeys(kv map[string]string) []string {
@@ -294,63 +330,62 @@ func sortedKeys(kv map[string]string) []string {
 
 // ---- load / save -------------------------------------------------------------
 
-// decryptVault decrypts a profile with the Secure Enclave key (Touch ID). It
-// also returns the SHA-256 of the ciphertext it decrypted.
-func (a *app) decryptVault(p string) (plain []byte, sum string, err error) {
-	ct, err := os.ReadFile(a.profileFile(p))
-	if err != nil {
-		return nil, "", err
-	}
-	id, err := a.identity()
-	if err != nil {
-		return nil, "", err
-	}
-	plain, err = decryptBytes(ct, id)
-	if err != nil {
-		return nil, "", a.fail("err_decrypt_failed")
-	}
-	return plain, sumHex(ct), nil
+// loaded is a decrypted profile together with the plaintext copy of its
+// public values as it was on disk at the same moment.
+type loaded struct {
+	kv      map[string]string
+	pub     map[string]bool
+	pubCopy []byte
 }
 
-// load returns a profile's keys. Touch ID unless the session holds the profile.
-func (a *app) load(p string) (map[string]string, error) {
-	if !exists(a.profileFile(p)) {
-		return map[string]string{}, nil
-	}
-	if s := a.activeSession(); s != nil {
-		// A miss leaves this process holding the profile's lock in the session
-		// until the lease is closed, so parallel callers share one Touch ID.
-		if l := s.acquire(p); l != nil {
-			defer l.close()
-			if l.hit {
-				return a.parse(p, l.data)
-			}
-			plain, sum, err := a.decryptVault(p)
-			if err != nil {
-				return nil, err
-			}
-			l.put(sum, plain)
-			return a.parse(p, plain)
+const maxPublicCopy = 1 << 20
+
+// snapshot reads the ciphertext of a profile and the plaintext copy of its
+// public values as one consistent pair. A writer replaces both while it holds
+// the profile lock, so a reader takes the lock shared (unless this process is
+// that writer).
+func (a *app) snapshot(p string) (ct, pubCopy []byte, err error) {
+	if !a.holdsLock(p) {
+		if f, err := os.OpenFile(a.lockFile(p), os.O_CREATE|os.O_RDWR, 0o600); err == nil {
+			defer f.Close()
+			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_SH)
 		}
 	}
-	return a.loadFresh(p, false)
+	if ct, err = os.ReadFile(a.profileFile(p)); err != nil {
+		return nil, nil, err
+	}
+	f, err := os.Open(a.publicFile(p))
+	if errors.Is(err, fs.ErrNotExist) {
+		return ct, nil, nil
+	}
+	// A copy that cannot be read, or is absurdly large, never matches.
+	unreadable := []byte{0}
+	if err != nil {
+		return ct, unreadable, nil
+	}
+	defer f.Close()
+	pubCopy, err = io.ReadAll(io.LimitReader(f, maxPublicCopy+1))
+	if err != nil || len(pubCopy) > maxPublicCopy {
+		return ct, unreadable, nil
+	}
+	return ct, pubCopy, nil
 }
 
-// loadFresh always decrypts with the Secure Enclave key, never from a session.
-func (a *app) loadFresh(p string, allowUnsafe bool) (map[string]string, error) {
-	plain, _, err := a.decryptVault(p)
+// decrypt decrypts a profile's ciphertext with the Secure Enclave key (Touch ID).
+func (a *app) decrypt(ct []byte) ([]byte, error) {
+	id, err := a.identity()
 	if err != nil {
 		return nil, err
 	}
-	return a.parseOpt(p, plain, allowUnsafe)
+	plain, err := decryptBytes(ct, id)
+	if err != nil {
+		return nil, a.fail("err_decrypt_failed")
+	}
+	return plain, nil
 }
 
-func (a *app) parse(p string, plain []byte) (map[string]string, error) {
-	return a.parseOpt(p, plain, false)
-}
-
-func (a *app) parseOpt(p string, plain []byte, allowUnsafe bool) (map[string]string, error) {
-	kv, err := parseProfileOpt(plain, allowUnsafe)
+func (a *app) parseLoaded(p string, plain, pubCopy []byte, allowUnsafe bool) (*loaded, error) {
+	kv, pub, err := parseProfileFull(plain, allowUnsafe)
 	var uk *unsafeKeyError
 	if errors.As(err, &uk) {
 		return nil, a.fail("err_unsafe_key_in_profile", "Name", p, "Key", uk.key)
@@ -358,16 +393,159 @@ func (a *app) parseOpt(p string, plain []byte, allowUnsafe bool) (map[string]str
 	if err != nil {
 		return nil, a.fail("err_corrupt_profile", "Name", p)
 	}
-	return kv, nil
+	return &loaded{kv: kv, pub: pub, pubCopy: pubCopy}, nil
 }
 
-// save encrypts kv to the profile file (public key only: no Touch ID).
-func (a *app) save(p string, kv map[string]string) error {
+// loadRaw decrypts a profile (Touch ID unless useSession and the session
+// holds it) without judging the copy of the public values. Everything except
+// `ls --verify` goes through loadProfile / loadFreshProfile, which do.
+func (a *app) loadRaw(p string, useSession, allowUnsafe bool) (*loaded, error) {
+	if !exists(a.profileFile(p)) {
+		return &loaded{kv: map[string]string{}, pub: map[string]bool{}}, nil
+	}
+	if s := a.activeSession(); useSession && s != nil {
+		for try := 0; try < 3; try++ {
+			// A miss leaves this process holding the profile's lock in the
+			// session until the lease is closed, so parallel callers share
+			// one Touch ID.
+			l := s.acquire(p)
+			if l == nil {
+				break
+			}
+			ct, pubCopy, err := a.snapshot(p)
+			if err != nil {
+				l.close()
+				return nil, err
+			}
+			if l.hit {
+				if l.sum == "" { // an agent of kc-env 0.5: it does not say what it cached
+					l.close()
+					break
+				}
+				if l.sum != sumHex(ct) { // the vault changed after the agent answered: ask again
+					l.close()
+					continue
+				}
+				ld, err := a.parseLoaded(p, l.data, pubCopy, allowUnsafe)
+				l.close()
+				return ld, err
+			}
+			plain, err := a.decrypt(ct)
+			if err != nil {
+				l.close()
+				return nil, err
+			}
+			l.put(sumHex(ct), plain)
+			l.close()
+			return a.parseLoaded(p, plain, pubCopy, allowUnsafe)
+		}
+	}
+	ct, pubCopy, err := a.snapshot(p)
+	if err != nil {
+		return nil, err
+	}
+	plain, err := a.decrypt(ct)
+	if err != nil {
+		return nil, err
+	}
+	return a.parseLoaded(p, plain, pubCopy, allowUnsafe)
+}
+
+// publicDiff lists the keys whose public value in the copy differs from the
+// encrypted profile (missing on either side included). Empty means the copy
+// is exactly what it should be.
+func publicDiff(l *loaded) []string {
+	if bytes.Equal(l.pubCopy, publicCopyOf(l.kv, l.pub)) {
+		return nil
+	}
+	shown, _, err := parseProfileFull(l.pubCopy, true)
+	if err != nil {
+		shown = nil
+	}
+	seen := map[string]bool{}
+	for k := range l.pub {
+		if v, ok := shown[k]; !ok || v != l.kv[k] {
+			seen[k] = true
+		}
+	}
+	for k := range shown {
+		if !l.pub[k] {
+			seen[k] = true
+		}
+	}
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 { // same values, but not the bytes kc-env writes
+		keys = []string{"?"}
+	}
+	return keys
+}
+
+// tamperError means the plaintext copy of a profile's public values does not
+// match the encrypted profile. It has already been reported (tampered).
+type tamperError struct{ profile string }
+
+func (e *tamperError) Error() string {
+	return "public values of " + e.profile + " were changed outside kc-env"
+}
+
+// tampered tells the user, on stderr and in a dialog, and stops the command.
+func (a *app) tampered(p string, keys []string) error {
+	names := strings.Join(keys, ", ")
+	fmt.Fprintln(os.Stderr, a.t.S("alert_tampered", "Name", p, "Keys", names, "Path", a.publicFile(p)))
+	alertDialog(a, p, a.t.S("alert_tampered_title"), a.t.S("alert_tampered_dialog", "Name", p, "Keys", names))
+	return &tamperError{p}
+}
+
+// checked refuses a profile whose public copy was changed outside kc-env.
+func (a *app) checked(p string, l *loaded, err error) (map[string]string, map[string]bool, error) {
+	if err != nil {
+		return nil, nil, err
+	}
+	if keys := publicDiff(l); len(keys) > 0 {
+		return nil, nil, a.tampered(p, keys)
+	}
+	return l.kv, l.pub, nil
+}
+
+// loadProfile returns a profile's values and which of them are public.
+// Touch ID unless the session holds the profile.
+func (a *app) loadProfile(p string) (map[string]string, map[string]bool, error) {
+	l, err := a.loadRaw(p, true, false)
+	return a.checked(p, l, err)
+}
+
+// loadFreshProfile always decrypts with the Secure Enclave key, never from a session.
+func (a *app) loadFreshProfile(p string, allowUnsafe bool) (map[string]string, map[string]bool, error) {
+	l, err := a.loadRaw(p, false, allowUnsafe)
+	return a.checked(p, l, err)
+}
+
+func (a *app) load(p string) (map[string]string, error) {
+	kv, _, err := a.loadProfile(p)
+	return kv, err
+}
+
+func (a *app) loadFresh(p string, allowUnsafe bool) (map[string]string, error) {
+	kv, _, err := a.loadFreshProfile(p, allowUnsafe)
+	return kv, err
+}
+
+// save encrypts a profile without public values.
+func (a *app) save(p string, kv map[string]string) error { return a.saveProfile(p, kv, nil) }
+
+// saveProfile encrypts kv to the profile file (public key only: no Touch ID)
+// and rewrites the plaintext copy of the public values and the key index.
+// Callers that modify an existing profile hold lockProfile.
+func (a *app) saveProfile(p string, kv map[string]string, pub map[string]bool) error {
 	r, err := a.recipient()
 	if err != nil {
 		return err
 	}
-	plain := serialize(kv)
+	plain := serializeProfile(kv, pub)
 	ct, err := encryptBytes(plain, r)
 	if err != nil {
 		return a.fail("err_encrypt_failed")
@@ -378,6 +556,9 @@ func (a *app) save(p string, kv map[string]string) error {
 	if err := writeAtomic(a.profileFile(p), ct); err != nil {
 		return err
 	}
+	if err := a.writePublicCopy(p, publicCopyOf(kv, pub)); err != nil {
+		return err
+	}
 	if err := a.writeIndex(p, sortedKeys(kv)); err != nil {
 		return err
 	}
@@ -385,6 +566,33 @@ func (a *app) save(p string, kv map[string]string) error {
 		s.refresh(p, sumHex(ct), plain) // only replaces a profile the session already holds
 	}
 	return nil
+}
+
+// writePublicCopy writes vault/<profile>.public, or removes it when the
+// profile has no public value.
+func (a *app) writePublicCopy(p string, data []byte) error {
+	if len(data) == 0 {
+		if err := os.Remove(a.publicFile(p)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return writeAtomic(a.publicFile(p), data)
+}
+
+// publicValues reads the plaintext copy for display (list, ls). It is not
+// authenticated: commands never take a value from it, and a copy with
+// anything unexpected in it is not shown at all.
+func (a *app) publicValues(p string) map[string]string {
+	b, err := os.ReadFile(a.publicFile(p))
+	if err != nil || len(b) > maxPublicCopy {
+		return nil
+	}
+	kv, pub, err := parseProfileFull(b, true)
+	if err != nil || len(pub) != 0 {
+		return nil
+	}
+	return kv
 }
 
 // lockProfile serialises read-modify-write of one profile across processes.
@@ -400,7 +608,24 @@ func (a *app) lockProfile(p string) (unlock func(), err error) {
 		f.Close()
 		return nil, err
 	}
-	return func() { f.Close() }, nil // closing releases the lock; so does exiting
+	a.lockMu.Lock()
+	if a.locked == nil {
+		a.locked = map[string]bool{}
+	}
+	a.locked[p] = true
+	a.lockMu.Unlock()
+	return func() {
+		a.lockMu.Lock()
+		delete(a.locked, p)
+		a.lockMu.Unlock()
+		f.Close() // closing releases the lock; so does exiting
+	}, nil
+}
+
+func (a *app) holdsLock(p string) bool {
+	a.lockMu.Lock()
+	defer a.lockMu.Unlock()
+	return a.locked[p]
 }
 
 // ---- key-name index (plaintext, no values) -----------------------------------

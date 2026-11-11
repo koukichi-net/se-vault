@@ -18,6 +18,7 @@ kc-env exec work -- gh repo list          # Touch ID once; the secret is passed 
 - No plaintext is written to disk: values stay in memory and reach a command only through its environment.
 - Sessions (optional) keep selected profiles in memory for a limited time, so a burst of work needs Touch ID only once. Only programs started inside the session can use them.
 - Deleting always needs Touch ID, even inside a session.
+- Settings that are not secret (a URL, a user name) can be stored next to the secrets as public values. They are shown without Touch ID, and kc-env stops and alerts you if their plaintext copy is changed behind its back.
 - It works with any tool: `exec` passes secrets as environment variables and `header` prints HTTP headers as JSON. kc-env has no tool-specific integration; [examples](#using-kc-env-with-other-tools-examples) show how to combine it with other tools, AI coding assistants included.
 - Messages are in English or Japanese, selected from `KC_ENV_LANG` / `LC_ALL` / `LC_MESSAGES` / `LANG`.
 - It is offline and small: one Go binary that links the [age](https://github.com/FiloSottile/age) library, plus [age-plugin-se](https://github.com/remko/age-plugin-se) for the Secure Enclave. No network access at runtime.
@@ -80,6 +81,23 @@ kc-env header work API_TOKEN              # {"Authorization":"Bearer <value>"} f
 When there is no terminal (for example in tools that run commands without a TTY), `set` asks for the value in a hidden macOS dialog.
 
 Key names must be valid environment variable names. Names that change how programs start (`PATH`, `HOME`, `DYLD_*`, `LD_*`, `NODE_OPTIONS`, ...) are refused. Profile names may contain letters, digits, `.`, `_` and `-`.
+
+### Public values
+
+A profile often needs settings that are not secret: the URL a token belongs to, a user name, a region. Store them with `--public`:
+
+```sh
+kc-env set --public work API_URL https://api.example.com   # not a secret, so it may be an argument
+kc-env ls work                            # API_TOKEN            (a secret: name only)
+                                          # API_URL=https://api.example.com
+kc-env exec work -- sh -c 'curl -H "Authorization: Bearer $API_TOKEN" "$API_URL/status"'
+```
+
+A public value is encrypted inside the profile like every other key, and commands always get it from there. A plaintext copy (`vault/<profile>.public`) exists only so that `list` and `ls` can show the value without Touch ID.
+
+Every decryption compares that copy with the encrypted profile. If something other than kc-env changed or removed the copy, kc-env runs nothing and prints no value. It reports the profile on standard error and in a dialog that stays on screen, and exits with status 3. `kc-env ls --verify <profile>` (always Touch ID) shows what differs and rebuilds the copy from the encrypted profile.
+
+Never use `--public` for a token or a password: the copy is plaintext on disk.
 
 ### Deleting
 
@@ -173,7 +191,8 @@ Use `--name` and `--prefix` for other header formats, for example `kc-env header
 ## Security notes
 
 - Losing the Mac, or erasing it, means losing access to the vault. This is by design: there is no recovery key. Keep the ability to reissue your API keys.
-- Key names are stored in plaintext (`vault/<profile>.keys`) so they can be listed without Touch ID. Values are always encrypted.
+- Key names are stored in plaintext (`vault/<profile>.keys`) so they can be listed without Touch ID. Values are always encrypted, and public values are also kept in plaintext (`vault/<profile>.public`) for display.
+- What `list` and `ls` show for a public value comes from that plaintext copy and is not verified until the next decryption. Commands never use the copy.
 - Once a value is handed to a command, that command (and anything it starts) can read it. On macOS, other processes running as you can also read that command's environment (`ps -wwE`) while it runs, sessions included.
 - When you move a secret into kc-env, remove its old `export` from your shell startup files, reissue it, and restart your terminals: running programs keep the environment they started with.
 - Anything running as you can replace kc-env's own files or delete the vault. Touch ID stops silent decryption; it is not a sandbox.
@@ -189,6 +208,7 @@ Use `--name` and `--prefix` for other header formats, for example `kc-env header
   identity.txt             reference to the Secure Enclave key (created by init)
   vault/<profile>.age      encrypted profile
   vault/<profile>.keys     key-name index (no values)
+  vault/<profile>.public   copy of the public values (plaintext, display only)
   run/<id>.sock            socket of a running session (no secrets on disk)
 ```
 

@@ -83,11 +83,3 @@ Then add the Tab completion line from the README, and any of its shell examples,
 - age-plugin-se: change the commit hash in the commands above. Read the upstream changes first, especially anything about the identity or recipient formats.
 
 Rebuilding replaces only the binaries, never your key or vault. Before you rely on a new version, check that `kc-env get` still decrypts an existing profile.
-
-### From 0.4 or earlier
-
-- `recipient.txt` is no longer used; the public key is derived from `identity.txt`. You can delete the file.
-- `KC_ENV_HOME` is no longer read. Keep the program in `<home>/bin`.
-- Sessions started by the old version stop being recognised (those commands ask for Touch ID every time). Their on-disk caches under `run/sessions/` are deleted the next time a session starts. Start new sessions with the new version.
-- `rm --all` and `rm-profile` now ask for Touch ID, and `rm` asks for it even inside a session.
-- Key names such as `PATH`, `HOME` or `DYLD_*` are refused. If a profile already holds one, kc-env says so and `kc-env rm <profile> <KEY>` removes it.

@@ -9,10 +9,15 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
+	"sync"
 	"syscall"
 )
 
-const version = "0.5.0"
+const version = "0.6.0"
+
+// exitTampered is the exit status when a profile's public values were changed
+// outside kc-env. Nothing is run or printed in that case.
+const exitTampered = 3
 
 const pluginName = "age-plugin-se"
 
@@ -31,6 +36,9 @@ type app struct {
 
 	sess        *session // set by activeSession
 	sessChecked bool
+
+	lockMu sync.Mutex
+	locked map[string]bool // profiles this process holds the vault lock for
 }
 
 // userError is printed as "kc-env: <msg>" and exits with status 1.
@@ -113,20 +121,27 @@ func main() {
 		fmt.Fprintln(os.Stderr, "kc-env:", err)
 		os.Exit(1)
 	}
-	err = a.run(os.Args[1:])
+	os.Exit(report(a.run(os.Args[1:])))
+}
+
+// report prints an error, if it still needs printing, and returns the exit status.
+func report(err error) int {
 	var ue *userError
 	var ec exitCode
+	var te *tamperError
 	switch {
 	case err == nil:
+		return 0
 	case errors.As(err, &ec):
-		os.Exit(int(ec))
+		return int(ec)
+	case errors.As(err, &te): // already reported by tampered()
+		return exitTampered
 	case errors.As(err, &ue):
 		fmt.Fprintln(os.Stderr, "kc-env:", ue.msg)
-		os.Exit(1)
 	default:
 		fmt.Fprintln(os.Stderr, "kc-env:", err)
-		os.Exit(1)
 	}
+	return 1
 }
 
 func (a *app) run(args []string) error {
@@ -236,6 +251,12 @@ func (a *app) checkPerms() error {
 func (a *app) profileFile(p string) string { return filepath.Join(a.vault, p+".age") }
 func (a *app) indexFile(p string) string   { return filepath.Join(a.vault, p+".keys") }
 func (a *app) lockFile(p string) string    { return filepath.Join(a.vault, "."+p+".lock") }
+
+// publicFile is the plaintext copy of a profile's public values, for display.
+func (a *app) publicFile(p string) string { return filepath.Join(a.vault, p+".public") }
+
+// alertFile is locked by the dialog that reports tampering while it is on screen.
+func (a *app) alertFile(p string) string { return filepath.Join(a.vault, "."+p+".alert") }
 
 func (a *app) requireProfile(p string) error {
 	if !exists(a.profileFile(p)) {

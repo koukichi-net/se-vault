@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,24 +26,19 @@ import (
 // process ancestry, which only real processes can exercise).
 func TestMain(m *testing.M) {
 	softwareKeys = true
+	// No dialog in the tests: the alert is appended to <home>/alerts instead.
+	alertDialog = func(a *app, profile, title, msg string) {
+		f, err := os.OpenFile(filepath.Join(a.home, "alerts"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err == nil {
+			fmt.Fprintf(f, "%s|%s|%s\n", profile, title, strings.ReplaceAll(msg, "\n", " "))
+			f.Close()
+		}
+	}
 	if path := os.Getenv("KC_ENV_TEST_FAKE_AGENT"); path != "" {
 		fakeAgent(path)
 	}
 	if home := os.Getenv("KC_ENV_TEST_HOME"); home != "" {
-		err := appAt(home).run(os.Args[1:])
-		var ue *userError
-		var ec exitCode
-		switch {
-		case err == nil:
-			os.Exit(0)
-		case errors.As(err, &ec):
-			os.Exit(int(ec))
-		case errors.As(err, &ue):
-			fmt.Fprintln(os.Stderr, "kc-env:", ue.msg)
-		default:
-			fmt.Fprintln(os.Stderr, "kc-env:", err)
-		}
-		os.Exit(1)
+		os.Exit(report(appAt(home).run(os.Args[1:])))
 	}
 	os.Exit(m.Run())
 }
@@ -116,7 +112,8 @@ func TestTemplatesRender(t *testing.T) {
 	for _, k := range []string{"Version", "AgeVersion", "Lang", "Self", "Home", "Identity",
 		"Sessions", "Vault", "Completion", "Shell", "Plugin", "Name", "Profile", "Key", "Cmd", "Path",
 		"Prompt", "Label", "Opt", "Value", "ID", "Start", "Expires", "Remaining", "Scope", "Cached",
-		"State", "Created", "Profiles", "Keys", "AtLeast", "Servers", "Phrase", "Seconds", "Paths", "Count", "Updated"} {
+		"State", "Created", "Profiles", "Keys", "AtLeast", "Servers", "Phrase", "Seconds", "Paths", "Count", "Updated",
+		"Shown", "Real"} {
 		data[k] = "X"
 	}
 	b := newBundle()
@@ -764,5 +761,336 @@ func TestCLIRefusals(t *testing.T) {
 	}
 	if out, _, _ := kc(t, a, nil, "", "ls", "prod"); strings.TrimSpace(out) != "K" {
 		t.Errorf("keys after refused rm: %q", out)
+	}
+}
+
+// ---- public values -------------------------------------------------------------
+
+func TestPublicRoundTrip(t *testing.T) {
+	kv := map[string]string{"URL": "https://example.com/a?b=c", "TOKEN": "s3cret", "USER": "日本語 name"}
+	pub := map[string]bool{"URL": true, "USER": true}
+	plain := serializeProfile(kv, pub)
+	if want := "TOKEN=czNjcmV0\n+URL="; !strings.HasPrefix(string(plain), want) {
+		t.Fatalf("serialized: %q", plain)
+	}
+	gotKV, gotPub, err := parseProfileFull(plain, false)
+	if err != nil || !reflect.DeepEqual(gotKV, kv) || !reflect.DeepEqual(gotPub, pub) {
+		t.Fatalf("round trip: %v %v %v", gotKV, gotPub, err)
+	}
+	// The copy holds the public values only, and nothing marks them.
+	cp := string(publicCopyOf(kv, pub))
+	if strings.Contains(cp, "TOKEN") || strings.Contains(cp, publicMark) || strings.Count(cp, "\n") != 2 {
+		t.Fatalf("copy: %q", cp)
+	}
+	if len(publicCopyOf(kv, nil)) != 0 {
+		t.Fatal("a profile without public keys has a non-empty copy")
+	}
+	// A profile without public keys is byte-for-byte the format of kc-env 0.5.
+	if string(serializeProfile(kv, nil)) != string(serialize(kv)) {
+		t.Fatal("format changed for profiles without public keys")
+	}
+	// Refused names stay refused when marked public.
+	if _, _, err := parseProfileFull([]byte("+PATH=dg==\n"), false); err == nil {
+		t.Error("a public PATH was accepted")
+	}
+}
+
+func TestPublicValuesSaveLoadList(t *testing.T) {
+	a := testApp(t)
+	kv := map[string]string{"URL": "https://example.com", "TOKEN": "s3cret"}
+	if err := a.saveProfile("work", kv, map[string]bool{"URL": true}); err != nil {
+		t.Fatal(err)
+	}
+	cp, _ := os.ReadFile(a.publicFile("work"))
+	if string(cp) != "URL=aHR0cHM6Ly9leGFtcGxlLmNvbQ==\n" {
+		t.Fatalf("copy on disk: %q", cp)
+	}
+	if fi, _ := os.Stat(a.publicFile("work")); fi.Mode().Perm() != 0o600 {
+		t.Errorf("copy mode: %v", fi.Mode())
+	}
+	ct, _ := os.ReadFile(a.profileFile("work"))
+	if strings.Contains(string(ct), "example") || strings.Contains(string(cp), "s3cret") {
+		t.Fatal("the ciphertext shows a value, or the copy holds a secret")
+	}
+	gotKV, gotPub, err := a.loadProfile("work")
+	if err != nil || !reflect.DeepEqual(gotKV, kv) || !reflect.DeepEqual(gotPub, map[string]bool{"URL": true}) {
+		t.Fatalf("load: %v %v %v", gotKV, gotPub, err)
+	}
+	if got := a.publicValues("work"); !reflect.DeepEqual(got, map[string]string{"URL": "https://example.com"}) {
+		t.Fatalf("publicValues: %v", got)
+	}
+	// Removing the last public value removes the copy.
+	delete(kv, "URL")
+	if err := a.saveProfile("work", kv, map[string]bool{"URL": true}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(a.publicFile("work")) {
+		t.Fatal("copy left behind")
+	}
+	if _, _, err := a.loadProfile("work"); err != nil {
+		t.Fatal(err)
+	}
+	// A copy with anything unexpected in it is not shown.
+	os.WriteFile(a.publicFile("work"), []byte("URL=dg==\n\x1b[31mEVIL\n"), 0o600)
+	if got := a.publicValues("work"); got != nil {
+		t.Errorf("a malformed copy was shown: %v", got)
+	}
+	if got := showValue("a\x1b[31mb\nc"); strings.ContainsAny(got, "\x1b\n") {
+		t.Errorf("showValue: %q", got)
+	}
+}
+
+func alerts(a *app) string { b, _ := os.ReadFile(filepath.Join(a.home, "alerts")); return string(b) }
+
+// The copy is display only, but a copy that does not match the encrypted
+// profile means something else wrote to the vault: every decryption stops.
+func TestPublicCopyTampering(t *testing.T) {
+	enc := func(s string) string { return "URL=" + base64Std(s) + "\n" }
+	cases := map[string]func(a *app){
+		"changed": func(a *app) { os.WriteFile(a.publicFile("work"), []byte(enc("https://evil.example")), 0o600) },
+		"removed": func(a *app) { os.Remove(a.publicFile("work")) },
+		"emptied": func(a *app) { os.WriteFile(a.publicFile("work"), nil, 0o600) },
+		"added": func(a *app) {
+			os.WriteFile(a.publicFile("work"), []byte("EXTRA=dg==\n"+enc("https://example.com")), 0o600)
+		},
+		"garbage":  func(a *app) { os.WriteFile(a.publicFile("work"), []byte("\x00\x01 not a copy"), 0o600) },
+		"reformat": func(a *app) { os.WriteFile(a.publicFile("work"), []byte(enc("https://example.com")+"\n"), 0o600) },
+		"dir": func(a *app) {
+			os.Remove(a.publicFile("work"))
+			os.Mkdir(a.publicFile("work"), 0o700)
+		},
+	}
+	for name, tamper := range cases {
+		t.Run(name, func(t *testing.T) {
+			a := testApp(t)
+			kv := map[string]string{"URL": "https://example.com", "TOKEN": "s3cret"}
+			if err := a.saveProfile("work", kv, map[string]bool{"URL": true}); err != nil {
+				t.Fatal(err)
+			}
+			tamper(a)
+			var te *tamperError
+			if _, _, err := a.loadProfile("work"); !errors.As(err, &te) || te.profile != "work" {
+				t.Fatalf("loadProfile: %v", err)
+			}
+			if _, _, err := a.loadFreshProfile("work", true); !errors.As(err, &te) {
+				t.Fatalf("loadFreshProfile (rm): %v", err)
+			}
+			if got := alerts(a); strings.Count(got, "work|") != 2 {
+				t.Fatalf("alerts: %q", got)
+			}
+			if report(&tamperError{"work"}) != exitTampered {
+				t.Fatal("exit status")
+			}
+		})
+	}
+	// A profile without public values, with a copy that claims one.
+	a := testApp(t)
+	a.save("plain", map[string]string{"TOKEN": "s3cret"})
+	os.WriteFile(a.publicFile("plain"), []byte(enc("https://evil.example")), 0o600)
+	var te *tamperError
+	if _, err := a.load("plain"); !errors.As(err, &te) {
+		t.Fatalf("stray copy: %v", err)
+	}
+}
+
+func base64Std(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+
+// End to end: nothing runs, nothing is printed, the exit status is 3, and
+// `ls --verify` shows the difference and repairs the copy.
+func TestPublicTamperingCLI(t *testing.T) {
+	a := testApp(t)
+	if _, e, code := kc(t, a, nil, "s3cret", "set", "work", "TOKEN"); code != 0 {
+		t.Fatalf("set: %s", e)
+	}
+	if _, e, code := kc(t, a, nil, "", "set", "--public", "work", "URL", "https://example.com"); code != 0 || !strings.Contains(e, "public") {
+		t.Fatalf("set --public: %d %s", code, e)
+	}
+	if out, _, _ := kc(t, a, nil, "", "ls", "work"); out != "TOKEN\nURL=https://example.com\n" {
+		t.Fatalf("ls: %q", out)
+	}
+	if out, _, _ := kc(t, a, nil, "", "list"); !strings.Contains(out, "URL = https://example.com") || strings.Contains(out, "s3cret") {
+		t.Fatalf("list: %q", out)
+	}
+	if out, _, code := kc(t, a, nil, "", "exec", "work", "--", "/bin/sh", "-c", `printf %s "$URL|$TOKEN"`); code != 0 || out != "https://example.com|s3cret" {
+		t.Fatalf("exec: %d %q", code, out)
+	}
+
+	os.WriteFile(a.publicFile("work"), []byte("URL="+base64Std("https://evil.example")+"\n"), 0o600)
+	marker := filepath.Join(a.home, "ran")
+	for _, args := range [][]string{
+		{"exec", "work", "--", "/usr/bin/touch", marker},
+		{"get", "work", "TOKEN"},
+		{"get", "work", "URL"},
+		{"header", "work", "TOKEN"},
+		{"rm", "work", "TOKEN"},
+	} {
+		out, e, code := kc(t, a, nil, "", args...)
+		if code != exitTampered || out != "" || !strings.Contains(e, "WARNING") || !strings.Contains(e, "URL") ||
+			!strings.Contains(e, "ls --verify work") || strings.Contains(e, "s3cret") {
+			t.Errorf("%v: exit=%d stdout=%q stderr=%q", args, code, out, e)
+		}
+	}
+	if _, e, code := kc(t, a, nil, "new", "set", "work", "OTHER"); code != exitTampered {
+		t.Errorf("set on a tampered profile: %d %s", code, e)
+	}
+	if exists(marker) {
+		t.Fatal("the command ran although the copy was tampered with")
+	}
+	if got := alerts(a); strings.Count(got, "work|") != 6 || !strings.Contains(got, "URL") {
+		t.Fatalf("alerts: %q", got)
+	}
+	// Still listed (from the copy, unverified) — and still stopped at the next use.
+	if out, _, _ := kc(t, a, nil, "", "ls", "work"); !strings.Contains(out, "URL=https://evil.example") {
+		t.Fatalf("ls shows the copy: %q", out)
+	}
+
+	out, e, code := kc(t, a, nil, "", "ls", "--verify", "work")
+	if code != 0 || out != "TOKEN\nURL=https://example.com\n" ||
+		!strings.Contains(e, "https://evil.example") || !strings.Contains(e, "https://example.com") {
+		t.Fatalf("ls --verify: %d %q %q", code, out, e)
+	}
+	if out, _, code := kc(t, a, nil, "", "exec", "work", "--", "/bin/sh", "-c", `printf %s "$URL"`); code != 0 || out != "https://example.com" {
+		t.Fatalf("exec after repair: %d %q", code, out)
+	}
+	if _, e, _ := kc(t, a, nil, "", "ls", "--verify", "work"); strings.Contains(e, "did not match") {
+		t.Errorf("a second ls --verify still reports a difference: %q", e)
+	}
+}
+
+func TestSetPublicCLI(t *testing.T) {
+	a := testApp(t)
+	// A secret is never accepted on the command line.
+	if _, e, code := kc(t, a, nil, "", "set", "work", "TOKEN", "on-the-command-line"); code == 0 || !strings.Contains(e, "usage") {
+		t.Errorf("secret as an argument: %d %q", code, e)
+	}
+	for _, bad := range []string{"two\nlines", "bell\a", ""} {
+		if _, _, code := kc(t, a, nil, "", "set", "--public", "work", "URL", bad); code == 0 {
+			t.Errorf("public value %q was accepted", bad)
+		}
+	}
+	if _, e, code := kc(t, a, nil, "", "set", "--public", "work", "PATH", "/x"); code == 0 || !strings.Contains(e, "refused") {
+		t.Errorf("public PATH: %d %q", code, e)
+	}
+	if exists(a.profileFile("work")) {
+		t.Fatal("a refused set created the profile")
+	}
+	// From standard input, like a secret.
+	if _, e, code := kc(t, a, nil, "eu-west-1", "set", "--public", "work", "REGION"); code != 0 {
+		t.Fatalf("set --public from stdin: %s", e)
+	}
+	kc(t, a, nil, "", "set", "--public", "work", "URL", "https://example.com")
+	kc(t, a, nil, "tok", "set", "work", "TOKEN")
+	if out, _, _ := kc(t, a, nil, "", "ls", "work"); out != "REGION=eu-west-1\nTOKEN\nURL=https://example.com\n" {
+		t.Fatalf("ls: %q", out)
+	}
+	// Setting it again without --public makes it a secret: gone from the copy.
+	kc(t, a, nil, "now-secret", "set", "work", "REGION")
+	cp, _ := os.ReadFile(a.publicFile("work"))
+	if out, _, _ := kc(t, a, nil, "", "ls", "work"); out != "REGION\nTOKEN\nURL=https://example.com\n" || strings.Contains(string(cp), "REGION") {
+		t.Fatalf("after re-set as a secret: %q / %q", out, cp)
+	}
+	// rm of a public key updates the copy; rm --all and rm-profile remove it.
+	if _, e, code := kc(t, a, nil, "", "rm", "work", "URL"); code != 0 {
+		t.Fatalf("rm: %s", e)
+	}
+	if exists(a.publicFile("work")) {
+		t.Fatal("copy left after the last public key was removed")
+	}
+	if _, _, err := a.loadProfile("work"); err != nil {
+		t.Fatalf("load after rm: %v", err)
+	}
+}
+
+// Inside a session a cached profile is checked against the copy on every
+// use, and a save by kc-env is never mistaken for tampering.
+func TestPublicValuesInSession(t *testing.T) {
+	a := testApp(t)
+	kv := map[string]string{"URL": "https://example.com", "TOKEN": "s3cret"}
+	pub := map[string]bool{"URL": true}
+	if err := a.saveProfile("work", kv, pub); err != nil {
+		t.Fatal(err)
+	}
+	ag := startAgent(t, a, time.Minute, nil, os.Getpid())
+	t.Setenv("KC_ENV_SESSION", ag.id)
+	if _, _, err := fresh(a).loadProfile("work"); err != nil {
+		t.Fatal(err)
+	}
+	main, _ := os.ReadFile(a.identityPath)
+	breakMainKey(a) // from here only the session can answer
+	if got, gotPub, err := fresh(a).loadProfile("work"); err != nil || got["URL"] != "https://example.com" || !gotPub["URL"] {
+		t.Fatalf("cached: %v %v %v", got, gotPub, err)
+	}
+	good, _ := os.ReadFile(a.publicFile("work"))
+	os.WriteFile(a.publicFile("work"), []byte("URL="+base64Std("https://evil.example")+"\n"), 0o600)
+	var te *tamperError
+	if _, _, err := fresh(a).loadProfile("work"); !errors.As(err, &te) {
+		t.Fatalf("tampered copy with a cached profile: %v", err)
+	}
+	os.WriteFile(a.publicFile("work"), good, 0o600)
+	if _, _, err := fresh(a).loadProfile("work"); err != nil {
+		t.Fatalf("restored copy: %v", err)
+	}
+	// A save through kc-env changes the vault file, the copy and the cache together.
+	os.WriteFile(a.identityPath, main, 0o600)
+	kv["URL"] = "https://example.org"
+	if err := fresh(a).saveProfile("work", kv, pub); err != nil {
+		t.Fatal(err)
+	}
+	breakMainKey(a)
+	if got, _, err := fresh(a).loadProfile("work"); err != nil || got["URL"] != "https://example.org" {
+		t.Fatalf("after save: %v %v", got, err)
+	}
+	if alerts(a) == "" || strings.Count(alerts(a), "work|") != 1 {
+		t.Fatalf("alerts: %q", alerts(a))
+	}
+}
+
+// Readers and a writer at the same time: a reader never sees the new
+// ciphertext with the old copy (or the reverse), so it never cries tampering.
+func TestPublicCopyNoFalseAlarm(t *testing.T) {
+	a := testApp(t)
+	pub := map[string]bool{"URL": true}
+	if err := a.saveProfile("work", map[string]string{"URL": "v0"}, pub); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	errs := make(chan error, 8)
+	for i := 0; i < 4; i++ {
+		go func() {
+			r := appAt(a.home)
+			for {
+				select {
+				case <-stop:
+					errs <- nil
+					return
+				default:
+				}
+				if _, _, err := r.loadProfile("work"); err != nil {
+					errs <- err
+					return
+				}
+			}
+		}()
+	}
+	w := appAt(a.home)
+	for i := 1; i <= 60; i++ {
+		unlock, err := w.lockProfile("work")
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = w.saveProfile("work", map[string]string{"URL": fmt.Sprintf("v%d", i)}, pub)
+		unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(stop)
+	for i := 0; i < 4; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("reader: %v", err)
+		}
+	}
+	if got := alerts(a); got != "" {
+		t.Fatalf("false alarm: %q", got)
 	}
 }

@@ -9,11 +9,15 @@ kc-env {{.Version}} — secrets in profiles, protected by a Secure Enclave key (
 Usage:
   kc-env <command> [args...]
 
-Listing (no Touch ID: only the key-name index is read, never values)
+Listing (no Touch ID: only the key-name index and the copy of public values are read,
+never a secret)
   list [<profile>]              all profiles and key names as a tree (alias: tree)
+                                Public values are shown as "KEY = value"
   profiles                      profile names, one per line
-  ls <profile>                  key names of a profile
-  ls --verify <profile>         decrypt to check the key names and rebuild the index (Touch ID)
+  ls <profile>                  key names of a profile; public values as "KEY=value"
+  ls --verify <profile>         decrypt, show what the encrypted profile really holds, and
+                                rebuild the index and the copy of the public values
+                                (always Touch ID, even inside a session)
 
 Values
   set <profile> <KEY>           add or replace a value. The value is read from (in order):
@@ -21,6 +25,15 @@ Values
                                   2. standard input    e.g. pbpaste | kc-env set work GITHUB_TOKEN
                                   3. a hidden dialog when neither is available
                                 Setting a key in an existing profile needs Touch ID
+  set --public <profile> <KEY> [<value>]
+                                add or replace a value that is NOT a secret (a URL, a user
+                                name, a region). It may be given on the command line.
+                                It is encrypted in the profile like every other key and
+                                handed to commands from there; a plaintext copy in
+                                vault/<profile>.public lets list and ls show it without
+                                Touch ID. Never use --public for a token or a password.
+                                e.g. kc-env set --public work API_URL https://api.example.com
+                                     kc-env exec work -- sh -c 'curl -H "Authorization: Bearer $API_TOKEN" "$API_URL/status"'
   get <profile> <KEY>           print a value (Touch ID)
                                 Avoid it where output is recorded (logs, chat transcripts)
   exec <profile> -- <cmd...>    run cmd with the profile's keys as environment variables (one Touch ID)
@@ -101,6 +114,13 @@ Files (paths used by this invocation)
   vault        {{.Vault}}
                  <profile>.age   ciphertext (lines of KEY=base64(value))
                  <profile>.keys  key-name index (plaintext, no values)
+                 <profile>.public  copy of the public values (plaintext, display only)
+
+Changed public values
+  Every decryption compares vault/<profile>.public with the encrypted profile. If something
+  other than kc-env changed or removed the copy, kc-env runs nothing and prints nothing:
+  it reports the profile on stderr and in a dialog, and exits with status 3.
+  Check and repair with: kc-env ls --verify <profile>
   completion   {{.Completion}}
                  add its directory to fpath in ~/.zshrc before compinit / oh-my-zsh
   plugin       {{.Plugin}}
@@ -127,6 +147,7 @@ err_invalid_key = "invalid key name: {{.Name}}"
 err_unsafe_key = "key name {{.Name}} is refused: it changes how programs start (PATH, HOME, DYLD_*, LD_*, KC_ENV_*, NODE_OPTIONS, ...)"
 err_unsafe_key_in_profile = "profile {{.Name}} holds the refused key name {{.Key}}; it will not be handed to commands. Remove it with: kc-env rm {{.Name}} {{.Key}}"
 err_value_nul = "the value contains a NUL byte, which an environment variable cannot hold"
+err_public_value = "a public value must be printable text on one line (no line breaks or control characters)"
 err_bad_identity = "{{.Path}} must hold exactly one Secure Enclave key (AGE-PLUGIN-SE-1...) of this Mac"
 err_unsafe_perms = "unsafe permissions: {{.Path}} must be owned by you and not writable by group or others"
 err_socket_path = "the session socket path is too long: {{.Path}} (move the home to a shorter path)"
@@ -168,7 +189,7 @@ err_rm_profile_has_keys = { one = "profile '{{.Name}}' still holds {{.Count}} ke
 
 # ---- usage ----
 usage_ls = "usage: kc-env ls [--verify] <profile>"
-usage_set = "usage: kc-env set <profile> <KEY>"
+usage_set = "usage: kc-env set <profile> <KEY>  or  kc-env set --public <profile> <KEY> [<value>] (only a public value may be given on the command line)"
 usage_get = "usage: kc-env get <profile> <KEY>"
 usage_header = "usage: kc-env header <profile> <KEY> [--name <Header>] [--prefix <text>]"
 usage_exec = "usage: kc-env exec <profile> -- <command...>"
@@ -184,6 +205,7 @@ prompt_value = "Value for {{.Label}}: "
 dialog_value = "Value for {{.Label}}"
 button_cancel = "Cancel"
 button_delete = "Delete"
+button_ok = "OK"
 prompt_auth = "Confirm with Touch ID (or your password)"
 msg_waiting_auth = "waiting for Touch ID / password..."
 confirm_rm_all = "Delete all {{.Count}} keys in profile '{{.Name}}'? (the empty profile is kept)"
@@ -193,6 +215,23 @@ confirm_rm_profile_force = "Delete profile '{{.Name}}' AND its {{.Count}} key(s)
 # ---- results ----
 msg_initialized = "initialized: {{.Home}}"
 msg_set = "set {{.Profile}}/{{.Key}}"
+msg_set_public = "set {{.Profile}}/{{.Key}} as a public value (encrypted in the profile; a plaintext copy is kept for display)"
+
+# ---- public values changed outside kc-env ----
+alert_tampered = """
+kc-env: WARNING: possible tampering. The command was NOT run.
+  The copy of the public values of profile {{.Name}} ({{.Path}})
+  does not match the encrypted profile. Something other than kc-env changed or removed it.
+  Keys that differ: {{.Keys}}
+  Check and repair: kc-env ls --verify {{.Name}}
+    It decrypts the profile with Touch ID, shows what differs, and rebuilds the copy from
+    the encrypted profile. If the real values are not the ones you set, find out what can
+    write to the vault before you use this profile again."""
+alert_tampered_title = "kc-env: possible tampering"
+alert_tampered_dialog = "The copy of the public values of profile {{.Name}} does not match the encrypted profile ({{.Keys}}). Something other than kc-env changed it.\n\nThe command was NOT run. In a terminal, run:\nkc-env ls --verify {{.Name}}"
+verify_public_differs = "the copy of the public values of {{.Name}} did not match the encrypted profile:"
+verify_public_diff = "{{.Key}}: the copy said {{.Shown}}; the encrypted profile holds {{.Real}}"
+verify_public_repaired = "rebuilt the copy from the encrypted profile. If the real values are not the ones you set, do not use profile {{.Name}} until you know what changed it"
 msg_removed_key = "removed {{.Profile}}/{{.Key}}"
 msg_removed_all = "removed all keys in {{.Name}}"
 msg_removed_profile = "removed profile {{.Name}}"
@@ -256,10 +295,10 @@ destroy_done = "Deleted: the key, {{.Profiles}} profile(s), {{.Keys}} key(s). To
 destroy_profile_line = { one = "{{.Name}}  ({{.Count}} key)", other = "{{.Name}}  ({{.Count}} keys)" }
 
 # ---- shell completion (static text, no placeholders) ----
-comp_cmd_list = "all profiles and key names as a tree (no Touch ID)"
+comp_cmd_list = "all profiles, key names and public values as a tree (no Touch ID)"
 comp_cmd_tree = "alias of list"
 comp_cmd_profiles = "profile names"
-comp_cmd_ls = "key names of a profile"
+comp_cmd_ls = "key names and public values of a profile"
 comp_cmd_set = "add or replace a key"
 comp_cmd_get = "print a value (Touch ID)"
 comp_cmd_header = "print an HTTP header as JSON (Touch ID)"
@@ -273,9 +312,10 @@ comp_cmd_init = "create the Secure Enclave key (once)"
 comp_cmd_destroy = "delete the key and every secret (terminal only, Touch ID)"
 comp_cmd_help = "show help"
 comp_cmd_version = "show version"
-comp_opt_verify = "decrypt to check and rebuild the index (Touch ID)"
+comp_opt_verify = "decrypt to check, rebuild the index and the copy of public values (always Touch ID)"
 comp_opt_force = "also delete the keys inside"
 comp_opt_all = "remove every key (keep the profile)"
+comp_opt_public = "the value is not a secret: keep a plaintext copy for display"
 comp_opt_name = "header name (default Authorization)"
 comp_opt_prefix = "text before the value (default \"Bearer \")"
 comp_opt_ttl = "lifetime (default 30m, at most 24h)"
