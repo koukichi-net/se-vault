@@ -13,7 +13,7 @@ import (
 	"syscall"
 )
 
-const version = "0.7.0"
+const version = "0.8.0"
 
 // exitTampered is the exit status when a profile's public values were changed
 // outside se-env. Nothing is run or printed in that case.
@@ -36,6 +36,8 @@ type app struct {
 
 	sess        *session // set by activeSession
 	sessChecked bool
+
+	target, purpose string // what Touch ID is asked for, shown in the dialog (see want)
 
 	lockMu sync.Mutex
 	locked map[string]bool // profiles this process holds the vault lock for
@@ -74,6 +76,8 @@ func newApp() (*app, error) {
 	// AGEDEBUG=plugin makes the age library copy the plugin protocol, file key
 	// included, to stderr.
 	os.Unsetenv("AGEDEBUG")
+	// Only se-env itself says what the Touch ID dialog asks for (withReason).
+	os.Unsetenv(reasonEnv)
 	// The age library starts the plugin by name through PATH. Narrow PATH to
 	// the one directory that holds it; commands started by exec and session
 	// get the original PATH back (childEnv).

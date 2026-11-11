@@ -212,6 +212,32 @@ confirm_rm_all = "Delete all {{.Count}} keys in profile '{{.Name}}'? (the empty 
 confirm_rm_empty_profile = "Delete empty profile '{{.Name}}'?"
 confirm_rm_profile_force = "Delete profile '{{.Name}}' AND its {{.Count}} key(s)? This cannot be undone."
 
+
+# ---- the Touch ID dialog (shown by age-plugin-se built with patches/age-plugin-se-reason.patch) ----
+# Line breaks are kept.
+# Template of the whole text. macOS shows: “age-plugin-se” is trying to <text>.
+# Session is empty, or a line of its own (auth_reason_session).
+auth_reason = "use the se-env key:\nRequested by: {{.Chain}}\nTarget: {{.Target}}\nAction: {{.Action}}{{.Session}}\n\nAuthenticate only if you expected this request"
+auth_reason_session = "After approval: the session of {{.Cmd}} keeps this whole profile until {{.Expires}}, and programs in the session can use it without Touch ID"
+auth_target_key = "{{.Key}} in profile '{{.Profile}}'"
+auth_target_keys = "{{.Keys}} in profile '{{.Profile}}'"
+auth_target_all = "every key in profile '{{.Profile}}'"
+auth_target_all_count = "every key in profile '{{.Profile}}' ({{.Count}})"
+auth_target_names = "the key names in profile '{{.Profile}}'"
+auth_target_profile = "profile '{{.Profile}}'"
+auth_target_empty_profile = "the empty profile '{{.Profile}}'"
+auth_target_everything = "the Secure Enclave key and all {{.Profiles}} profile(s)"
+auth_do_get = "print the value (se-env get)"
+auth_do_header = "print it as the HTTP header {{.Header}} (se-env header)"
+auth_do_exec = "pass them as environment variables to the command \"{{.Cmd}}\""
+auth_do_set = "save it as a secret (the profile is read to encrypt it again)"
+auth_do_set_public = "save it as a public value (the profile is read to encrypt it again)"
+auth_do_ls = "list them (no values are shown)"
+auth_do_verify = "check its contents and rebuild its copy of public values and its index (se-env ls --verify)"
+auth_do_rm = "delete"
+auth_do_rm_empty = "check that it is empty, then delete it"
+auth_do_rm_profile = "delete it with its {{.Count}} key(s)"
+auth_do_destroy = "erase for good (se-env destroy)"
 # ---- results ----
 msg_initialized = "initialized: {{.Home}}"
 msg_set = "set {{.Profile}}/{{.Key}}"

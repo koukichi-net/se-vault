@@ -14,7 +14,7 @@ se-env exec work -- gh repo list          # Touch ID once; the secret is passed 
 
 - The same variable name (e.g. `GITHUB_TOKEN`) can hold a different value in each profile.
 - The decryption key is hardware-bound: it is generated inside the Secure Enclave and cannot be exported. Copies of the vault are useless on any other Mac.
-- Every decryption asks for Touch ID, enforced by the Secure Enclave itself (password fallback).
+- Every decryption asks for Touch ID, enforced by the Secure Enclave itself (password fallback). The dialog says which programs asked, for which profile and keys, and what will be done with them.
 - No plaintext is written to disk: values stay in memory and reach a command only through its environment.
 - Sessions (optional) keep selected profiles in memory for a limited time, so a burst of work needs Touch ID only once. Only programs started inside the session can use them.
 - Deleting always needs Touch ID, even inside a session.

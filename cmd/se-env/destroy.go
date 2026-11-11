@@ -99,6 +99,7 @@ func (a *app) cmdDestroy(args []string) error {
 
 	// 5. Touch ID with the Secure Enclave key (never a session)
 	fmt.Fprintln(e, a.t.S("prompt_auth"))
+	a.want(a.t.S("auth_target_everything", "Profiles", len(profiles)), a.t.S("auth_do_destroy"))
 	if !a.authPresence() {
 		return a.fail("err_auth_failed_nothing")
 	}

@@ -129,6 +129,23 @@ What se-env does with the result:
 
 The plugin is started by name through `PATH`, so se-env narrows its own `PATH` to the single directory that holds the plugin (`<home>/bin` first, then the absolute directories of your `PATH`). Commands started by `exec` and `session` get your original `PATH` back. se-env also removes `AGEDEBUG` from its environment, because with `AGEDEBUG=plugin` the age library would print the plugin protocol, file key included, to stderr. The dialog helper is always `/usr/bin/osascript`, never looked up on `PATH`.
 
+The Touch ID dialog is shown by the plugin, so macOS names only "age-plugin-se". To say who asks and what for, se-env sets `SE_ENV_AUTH_REASON` just while it starts the plugin, and a plugin built with `patches/age-plugin-se-reason.patch` ([build.md](build.md)) puts that text in the dialog:
+
+```text
+“age-plugin-se” is trying to use the se-env key:
+Requested by: Ghostty › login › zsh › claude › zsh › se-env
+Target: every key in profile 'work'
+Action: pass them as environment variables to the command "gh repo list"
+After approval: the session of claude (PID 4242) keeps this whole profile until 15:30, ...   (in a session only)
+
+Authenticate only if you expected this request.
+```
+
+- "Requested by" lists the processes above se-env, outermost first: the application bundle name for a program inside one, otherwise the name the program was started as. Up to 8 are shown.
+- The plugin uses the text only when its parent process is the `se-env` in its own directory (it compares the executables' real paths with `proc_pidpath`). A program that starts the plugin directly gets macOS's default dialog, as without the patch.
+- se-env removes the variable from its environment at start and after each use, and never passes it to commands started by `exec` or `session`.
+- The names are what is reported, not proof: any program running as you can choose its own name or be started through a symlink with a misleading name. The dialog helps you notice a request you did not expect; it does not authenticate the caller.
+
 ## 6. Sessions
 
 `se-env session [--only p1,p2] [--ttl 30m] -- <command>` lets the selected profiles skip Touch ID after the first use.
@@ -210,4 +227,4 @@ These checks stop se-env itself from being used to delete secrets unattended (fo
 
 ## 9. Build integrity
 
-se-env ships no build script. [build.md](build.md) lists the few commands to run by hand: `go mod verify` checks every Go module (the age library included) against the hashes pinned in `go.sum`, and se-env is built with `GOTOOLCHAIN=local` (so no toolchain is downloaded) and `GOFLAGS=-mod=readonly`. age-plugin-se is cloned into a new, empty directory at a pinned commit; the commit hash **and the absence of any other file in the checkout** are verified before it is compiled directly with `swiftc`, which needs no package manager. The se-env binary and the plugin are the only code involved.
+se-env ships no build script. [build.md](build.md) lists the few commands to run by hand: `go mod verify` checks every Go module (the age library included) against the hashes pinned in `go.sum`, and se-env is built with `GOTOOLCHAIN=local` (so no toolchain is downloaded) and `GOFLAGS=-mod=readonly`. age-plugin-se is cloned into a new, empty directory at a pinned commit; the commit hash **and the absence of any other file in the checkout** are verified, `patches/age-plugin-se-reason.patch` is applied and checked to change only `Sources/Crypto.swift`, and it is compiled directly with `swiftc`, which needs no package manager. The se-env binary and the plugin are the only code involved.

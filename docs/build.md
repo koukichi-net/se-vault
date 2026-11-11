@@ -28,7 +28,7 @@ go build -trimpath -o bin/se-env ./cmd/se-env
 
 ## 2. Build age-plugin-se
 
-The plugin is built from a pinned commit in a **new, empty directory**. Do not reuse an old checkout: `swiftc` compiles every `.swift` file it finds in `Sources/`, so a leftover or modified file would end up in the binary even though the commit hash matches.
+The plugin is built from a pinned commit in a **new, empty directory**, with `patches/age-plugin-se-reason.patch` from this repository applied. Do not reuse an old checkout: `swiftc` compiles every `.swift` file it finds in `Sources/`, so a leftover or modified file would end up in the binary even though the commit hash matches.
 
 ```sh
 SE_COMMIT=a229872979aa1b46f72fd76106e39e2a097c2f1d      # tag v0.2.1
@@ -41,9 +41,15 @@ git -C "$SRC" -c advice.detachedHead=false checkout -q "$SE_COMMIT"
 test "$(git -C "$SRC" rev-parse HEAD)" = "$SE_COMMIT"   && echo "commit OK"
 test -z "$(git -C "$SRC" status --porcelain --ignored)" && echo "tree OK (nothing but the commit's files)"
 
+# The patch that shows who asks, on what and for what in the Touch ID dialog. Only Crypto.swift may change.
+git -C "$SRC" apply "$PWD/patches/age-plugin-se-reason.patch"
+test "$(git -C "$SRC" status --porcelain --ignored)" = " M Sources/Crypto.swift" && echo "patch OK"
+
 ( cd "$SRC" && swiftc -O -parse-as-library -module-name age_plugin_se Sources/*.swift -o "$OUT" )
 rm -rf "$SRC"
 ```
+
+The patch makes the plugin show the text se-env passes in the environment variable `SE_ENV_AUTH_REASON` in the Touch ID dialog (`LAContext.localizedReason`). The text is used only when the plugin's parent process is the `se-env` in the same directory as the plugin, so another program that starts the plugin itself cannot change the dialog. Nothing else changes; read `patches/age-plugin-se-reason.patch` to check.
 
 The plugin is compiled with plain `swiftc`, not SwiftPM. SwiftPM would also fetch `swift-crypto`, which is used only on Linux and Windows. On macOS the plugin depends only on Apple frameworks (CryptoKit, LocalAuthentication). Warnings such as `'21.0' is not a valid version number for macOS` come from upstream code and affect only the optional post-quantum keys (`--pq`). They are harmless here.
 
@@ -57,7 +63,7 @@ sudo port install age-plugin-se     # MacPorts
 nix profile install nixpkgs#age-plugin-se
 ```
 
-se-env looks for the plugin in `<home>/bin` first and then in the absolute directories of your `PATH`; `se-env help` shows which copy is used, under "plugin". With this option you trust the package's build pipeline instead of your own build, and the version may differ from the one pinned above. se-env refuses to run if the plugin or its directory is writable by group or others, which is the case for `/usr/local/bin` on some Intel Macs; copy the plugin to `<home>/bin` then.
+se-env looks for the plugin in `<home>/bin` first and then in the absolute directories of your `PATH`; `se-env help` shows which copy is used, under "plugin". With this option you trust the package's build pipeline instead of your own build, and the version may differ from the one pinned above. A packaged plugin is not patched, so the Touch ID dialog shows only macOS's default text, without the caller, target and action. se-env refuses to run if the plugin or its directory is writable by group or others, which is the case for `/usr/local/bin` on some Intel Macs; copy the plugin to `<home>/bin` then.
 
 ## 3. Install
 
@@ -80,6 +86,6 @@ Then add the Tab completion line from the README, and any of its shell examples,
 ## Updating
 
 - Go modules: `go get <module>@<version>` and `go mod tidy` update `go.mod` and `go.sum`. Review the changes (especially to `filippo.io/age`) before rebuilding.
-- age-plugin-se: change the commit hash in the commands above. Read the upstream changes first, especially anything about the identity or recipient formats.
+- age-plugin-se: change the commit hash in the commands above. Read the upstream changes first, especially anything about the identity or recipient formats. If the patch no longer applies, redo `patches/age-plugin-se-reason.patch` against the new commit.
 
 Rebuilding replaces only the binaries, never your key or vault. Before you rely on a new version, check that `se-env get` still decrypts an existing profile.
