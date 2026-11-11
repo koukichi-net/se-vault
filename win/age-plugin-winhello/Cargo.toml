@@ -1,0 +1,13 @@
+[package]
+name = "age-plugin-winhello"
+description = "age plugin that keeps the key behind Windows Hello (for se-env)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+age-core.workspace = true
+age-plugin.workspace = true
+winhello-core.workspace = true
+sewin.workspace = true

@@ -92,6 +92,9 @@ Session caches
 
 Setup
   init                          create the Secure Enclave key (once)
+  rekey                         make a new key and encrypt every profile to it again, then
+                                delete the old key (Touch ID once per profile). If it stops
+                                half-way, run it again: it continues where it stopped
   help, -h, --help              this help
   version                       version
 
@@ -158,6 +161,7 @@ err_no_key = "no such key: {{.Profile}}/{{.Key}}"
 err_no_key_nothing_removed = "no such key: {{.Profile}}/{{.Key}} (nothing removed)"
 err_plugin_input = "the age plugin asked for input, which se-env does not support: {{.Prompt}}"
 err_decrypt_failed = "decryption failed or was cancelled"
+err_key_unusable = "the Secure Enclave key in {{.Path}} can no longer be used: {{.Detail}}. Profiles encrypted to it cannot be decrypted"
 err_encrypt_failed = "encryption failed"
 err_corrupt_profile = "corrupt entry in profile {{.Name}}"
 err_no_value = "no value"
@@ -166,7 +170,15 @@ err_cancelled = "cancelled"
 err_aborted = "aborted"
 err_already_initialized = "already initialized ({{.Path}})"
 err_plugin_missing = "age-plugin-se not found in <home>/bin or on PATH"
+err_dll_missing = "{{.Path}} could not be loaded (Windows only: it must be next to se-env.exe)"
+err_harden_failed = "this process could not be protected from other programs ({{.Value}}); refusing to handle secrets"
 err_keygen_failed = "key generation failed"
+err_rekey_failed = "rekey stopped at profile {{.Name}}. Run se-env rekey again to continue; until then the old key stays in {{.Path}} and still decrypts"
+msg_rekey_start = "rekey: creating a new key. Then each of the {{.Profiles}} profile(s) is decrypted with the old key (Touch ID each) and encrypted to the new one"
+msg_rekey_resume = "rekey: continuing an earlier rekey that did not finish ({{.Path}} is the old key)"
+msg_rekey_profile = "  {{.Name}}: encrypted to the new key"
+msg_rekey_profile_done = "  {{.Name}}: already on the new key"
+msg_rekey_done = "rekey finished: {{.Profiles}} profile(s) use the new key; the old key is deleted"
 err_option_value = "{{.Opt}} needs a value"
 err_command_not_found = "command not found: {{.Cmd}}"
 err_in_session = "already inside a se-env session (see: se-env cache)"
@@ -199,6 +211,7 @@ usage_rm_profile = "usage: se-env rm-profile [--force] <profile>"
 usage_cache = "usage: se-env cache [info | list | rm <ID>... | rm --current | rm --all]"
 usage_cache_rm = "usage: se-env cache rm <ID>... | --current | --all   (IDs: se-env cache list)"
 usage_destroy = "usage: se-env destroy   (no options; it always asks)"
+usage_rekey = "usage: se-env rekey   (no options)"
 
 # ---- prompts / dialogs ----
 prompt_value = "Value for {{.Label}}: "
@@ -238,6 +251,8 @@ auth_do_rm = "delete"
 auth_do_rm_empty = "check that it is empty, then delete it"
 auth_do_rm_profile = "delete it with its {{.Count}} key(s)"
 auth_do_destroy = "erase for good (se-env destroy)"
+auth_target_rekey = "profile '{{.Profile}}' (with the old key)"
+auth_do_rekey = "encrypt it again to the new key (se-env rekey)"
 # ---- results ----
 msg_initialized = "initialized: {{.Home}}"
 msg_set = "set {{.Profile}}/{{.Key}}"
@@ -336,6 +351,7 @@ comp_cmd_lock = "drop this session's cache"
 comp_cmd_cache = "inspect (info / list) and end (rm, Touch ID) sessions"
 comp_cmd_init = "create the Secure Enclave key (once)"
 comp_cmd_destroy = "delete the key and every secret (terminal only, Touch ID)"
+comp_cmd_rekey = "make a new key and encrypt every profile to it again (Touch ID per profile)"
 comp_cmd_help = "show help"
 comp_cmd_version = "show version"
 comp_opt_verify = "decrypt to check, rebuild the index and the copy of public values (always Touch ID)"

@@ -45,7 +45,7 @@ _se-env() {
   done
 
   local -a subcmds c   # not "commands": that would shadow zsh's $commands hash
-  for c in list tree profiles ls set get header exec rm rm-profile session lock cache init destroy help version; do
+  for c in list tree profiles ls set get header exec rm rm-profile session lock cache init rekey destroy help version; do
     subcmds+=("$c:${_kc_m[comp_cmd_${c//-/_}]:-}")
   done
 

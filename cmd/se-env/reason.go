@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 // The Touch ID dialog is shown by age-plugin-se, so by default macOS names
@@ -55,6 +52,7 @@ func (a *app) authReason(s *session) string {
 // withReason runs f (which starts the plugin) with the dialog text in the
 // environment, and takes it out again so no command started later sees it.
 func (a *app) withReason(s *session, f func() error) error {
+	platformTick()
 	os.Setenv(reasonEnv, a.authReason(s))
 	defer os.Unsetenv(reasonEnv)
 	return f()
@@ -86,46 +84,6 @@ func callerChain(pid int) string {
 		out = append(out, names[i])
 	}
 	return strings.Join(append(out, "se-env"), " › ")
-}
-
-// procName returns a process's parent and a short name for it: the
-// application bundle for a program inside one ("Ghostty"), otherwise the
-// file name it was started as ("claude", not the version-named file a
-// symlink points to). Falls back to the kernel's 16-byte command name.
-func procName(pid int) (ppid int, name string, ok bool) {
-	kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
-	if err != nil || int(kp.Proc.P_pid) != pid {
-		return 0, "", false
-	}
-	ppid = int(kp.Eproc.Ppid)
-	comm := kp.Proc.P_comm[:]
-	if i := bytes.IndexByte(comm, 0); i >= 0 {
-		comm = comm[:i]
-	}
-	name = string(comm)
-	if exe := execPath(pid); exe != "" {
-		name = displayName(exe)
-	}
-	name = printable(name)
-	if name == "" {
-		name = "?"
-	}
-	return ppid, name, true
-}
-
-// execPath reads the path a process was started with (kern.procargs2:
-// argc, then the path). Empty when it cannot be read, as for processes of
-// other users.
-func execPath(pid int) string {
-	b, err := unix.SysctlRaw("kern.procargs2", pid)
-	if err != nil || len(b) < 5 {
-		return ""
-	}
-	b = b[4:] // argc
-	if i := bytes.IndexByte(b, 0); i > 0 {
-		return string(b[:i])
-	}
-	return ""
 }
 
 // displayName turns an executable path into the name shown in the dialog.

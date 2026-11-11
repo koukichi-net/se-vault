@@ -1,0 +1,152 @@
+# Windows で異なるメッセージ。それ以外は ../ja.toml を使い、macOS の部品の名前を
+# 置き換える（sys_windows.go の platformText）。
+
+help = '''se-env {{.Version}} — Windows Hello（TPM）で保護したAPIキーをプロファイル単位で管理
+（age {{.AgeVersion}}、言語: {{.Lang}}。SE_ENV_LANG・LC_ALL・LC_MESSAGES・LANG で変更できます）
+
+使い方:
+  se-env <コマンド> [引数...]
+
+一覧・確認（Touch ID 不要。読むのはキー名の索引と公開値の写しだけで、秘密の値は読みません）
+  list [<profile>]              全プロファイルとキー名をツリー表示（別名: tree）
+                                公開値は「KEY = 値」の形で表示
+  profiles                      プロファイル名だけを1行ずつ表示
+  ls <profile>                  そのプロファイルのキー名を表示。公開値は「KEY=値」の形
+  ls --verify <profile>         実際に復号して、暗号化された正本の内容を表示し、索引と
+                                公開値の写しを作り直す（セッションの中でも必ず Touch ID）
+
+値の操作
+  set <profile> <KEY>           追加または上書き。値の受け取り方（優先順）:
+                                  1. 端末なら非表示プロンプト
+                                  2. パイプなら標準入力   例: Get-Clipboard | se-env set work GITHUB_TOKEN
+                                  3. どちらもなければ伏せ字のダイアログ
+                                既存プロファイルへの set は復号を伴うため Touch ID が必要
+  set --public <profile> <KEY> [<値>]
+                                秘密ではない値（URL、ユーザー名、リージョンなど）を追加または
+                                上書き。値はコマンドラインに書ける。
+                                ほかのキーと同じくプロファイルの中に暗号化して保存し、コマンド
+                                にはそこから渡す。vault/<profile>.public に平文の写しを置くので、
+                                list と ls は Touch ID なしで値を表示できる。
+                                トークンやパスワードには --public を絶対に使わないこと。
+                                例: se-env set --public work API_URL https://api.example.com
+                                    se-env exec work -- sh -c 'curl -H "Authorization: Bearer $API_TOKEN" "$API_URL/status"'
+  get <profile> <KEY>           値を標準出力へ（Touch ID）
+                                ※ 出力が記録される場所（ログやチャットの履歴など）では使わない
+  exec <profile> -- <cmd...>    プロファイルのキーを環境変数にして cmd を実行（Touch ID 1回）
+                                値は cmd の子プロセスにだけ渡り、シェルには残りません
+                                例: se-env exec work -- gh repo list
+  header <profile> <KEY> [--name <Header>] [--prefix <text>]
+                                HTTPヘッダーを JSON で出力（Touch ID）。既定は
+                                {"Authorization":"Bearer <値>"}。コマンドの出力からヘッダーを
+                                JSON で受け取るツール向け。--prefix '' で前置きなし
+                                例: se-env header work API_TOKEN --name X-Api-Key --prefix ''
+
+削除（セッションの中でも、必ず Secure Enclave の鍵で Touch ID を求める）
+  rm <profile> <KEY> [<KEY>...] キーを削除（複数指定可）
+                                1つでも存在しないキーがあれば、何も消さずに止まる
+  rm --all <profile>            プロファイル内のキーをすべて削除。空のプロファイルは残る
+                                （先に確認あり）
+  rm-profile <profile>          空のプロファイルを削除（先に確認あり）
+                                キーが残っていると削除せずに止まる
+  rm-profile --force <profile>  プロファイルを中のキーごと削除（先に確認あり。元に戻せない）
+  ※ 確認は、端末なら y/N の入力、端末がなければダイアログ（既定はキャンセル）
+
+完全削除（PCの初期化前など）
+  destroy                       Secure Enclave の鍵とすべてのキーを削除する。元に戻せない
+                                消すもの: identity.txt, vault/, run/
+                                残すもの: bin/, completions/（se-env init で再開できる）
+                                手順: 削除対象の一覧 → y/N → 指定文字列の入力 → 10秒待機
+                                      → Touch ID（セッションは使わない）→ 削除と確認
+                                端末から直接実行したときだけ動く（パイプ・ダイアログ・
+                                ほかのプログラム・セッション内からは実行できない）
+
+セッション（一定時間 Touch ID を省く）
+  session [--ttl 30m] [--only p1,p2] [-- <cmd...>]
+                                cmd（省略時はシェル）をセッション付きで起動する。セッション内では、
+                                各プロファイルの最初の復号だけ Touch ID を求め、以降は使い回す
+                                  --ttl   有効期限（例: 15m, 1h, 2h。既定 30m、最長 24h）
+                                  --only  キャッシュを許すプロファイル（それ以外は毎回 Touch ID）
+                                例: se-env session --only work -- claude
+  session status                cache と同じ（今のセッションの情報）
+  lock                          今のセッションのキャッシュを消す（次の利用で再び Touch ID）
+
+  仕組み: 復号した内容は se-env session のプロセスが自分のメモリにだけ持つ。ディスクには
+  書かず、環境変数にも鍵を入れない（SE_ENV_SESSION はセッションの ID だけ）。
+  se-env は run/ のソケット経由でそのプロセスに問い合わせる。応答するのは、cmd の
+  配下のプロセスだけ（セッションの Job Object に入っていて、抜けられない）。期限と --only もそのプロセスが管理し、
+  cmd の終了時か期限切れですべて消す。
+  同時に複数の要求が来ても（複数のコマンドが一斉に起動したときなど）Touch ID は1回で済む。
+  注意: cmd の配下で起動したプログラムは、どれも Touch ID なしで値を読める。
+  セッションで起動したツールやエージェントも、あなたの確認なしに鍵を使えるようになる。
+  必要なプロファイルだけ --only で許可し、期限は短めにすること。
+
+キャッシュの確認・削除
+  cache                         このセッションのキャッシュ情報（ID、起動コマンド、期限、対象、
+                                キャッシュ済みプロファイルと作成時刻）
+  cache list                    このMacで動いているすべてのセッションの一覧（* が今のセッション）
+                                表示するのは情報だけ。他のセッションの値は読めない
+  cache rm <ID>...              指定したセッションを終了する（Touch ID 必須。ID は先頭4文字以上）
+  cache rm --current            今のセッションを終了する（Touch ID 必須）
+  cache rm --all                すべてのセッションを終了する（Touch ID 必須）
+                                終了したセッションでは、そのコマンドが終わるまで毎回 Touch ID になる
+                                （lock は今のセッションだけを、Touch ID なしで一時的に消す）
+
+セットアップ
+  init                          Secure Enclave 鍵を作成（最初の1回だけ）
+  rekey                         新しい鍵を作り、全プロファイルを暗号化し直してから古い鍵を
+                                削除する（プロファイルごとに Touch ID）。途中で止まったら、
+                                もう一度実行すると続きから再開する
+  help, -h, --help              このヘルプ
+  version                       バージョン
+
+名前の規則
+  profile   英数字で始まり、英数字と . _ - が使える        例: work, personal, stg.work
+  KEY       英字か _ で始まり、英数字と _ が使える（環境変数名として有効なもの）
+            プログラムの起動のしかたを変える名前は使えない（PATH, PATHEXT, COMSPEC,
+            TEMP, SE_ENV_*, NODE_OPTIONS など。大文字と小文字の違いだけの名前は同じ名前）
+
+認証
+  復号のたびに Windows Hello（顔・指紋・PIN）を求めます。鍵は Windows Hello の鍵（TPM で
+  保護）で、復号はその中で行うので、鍵はこのPCから取り出せず、se-env のメモリにも出ません。
+  PC を失ったり Windows Hello をリセットしたりすると復号できないので、APIキーを再発行して
+  登録し直してください。
+  SSH やリモートデスクトップの中では Windows Hello を表示できません。
+
+ファイル（今の実行で使われているパス）
+  本体         {{.Self}}
+  ホーム       {{.Home}}
+  鍵の参照     {{.Identity}}
+  セッション   {{.Sessions}}   （動作中のセッションのソケット。秘密は置かない）
+  保管庫       {{.Vault}}
+                 <profile>.age   暗号文（中身は KEY=base64(値) の行）
+                 <profile>.keys  キー名の索引（平文。値は含まない）
+                 <profile>.public  公開値の写し（平文。表示専用）
+
+公開値が書き換えられたとき
+  復号のたびに、vault/<profile>.public を暗号化された正本と照合します。se-env 以外のものが
+  写しを書き換えたり消したりしていた場合、se-env は何も実行せず、何も出力しません。
+  標準エラーとダイアログでプロファイル名を知らせ、終了コード 3 で終わります。
+  確認と修復: se-env ls --verify <profile>
+  補完（zsh）  {{.Completion}}
+                 （zsh のみ）
+  プラグイン   {{.Plugin}}
+               （<ホーム>/bin を優先し、なければ PATH の絶対パスのディレクトリから探す）
+  これらの所有者が自分でないか、ほかの人が書き込める（ACL）場合、se-env は動作を止めます。
+
+ディレクトリを移動するとき
+  ホーム（bin/ identity.txt vault/ を含むディレクトリ）を丸ごと移動します。
+  ホームは常に「本体の場所の1つ上」として決まるので、設定の変更は不要です。
+  identity.txt はパスに依存しないので、移動しても同じ鍵がそのまま使えます。
+  PATH だけは直してください:
+    古いホームの代わりに <新しいホーム>\bin を PATH に入れる'''
+
+destroy_scope = '''  削除されるもの: identity.txt, vault/（全プロファイル）, run/（セッション）
+  残るもの:       bin/, completions/（se-env init で作り直せます）
+
+  ※ 元に戻す方法はありません。Windows Hello の鍵も削除するので、
+    保管庫のバックアップからも復号できなくなります。
+    使っていたAPIキーは、必要なら各サービスで再発行してください。'''
+
+err_bad_identity = "{{.Path}} には、このPCの Windows Hello の鍵（AGE-PLUGIN-WINHELLO-1...）を1行だけ置いてください"
+err_unsafe_key = "キー名 {{.Name}} は使えません。プログラムの起動のしかたを変える名前です（PATH, PATHEXT, COMSPEC, TEMP, SE_ENV_*, NODE_OPTIONS など。大文字と小文字の違いは区別しません）"
+err_key_unusable = "{{.Path}} の Windows Hello の鍵が使えなくなっています: {{.Detail}}。Windows Hello の PIN の削除や TPM のクリアで鍵は失われ、この鍵で暗号化したプロファイルは二度と復号できません"

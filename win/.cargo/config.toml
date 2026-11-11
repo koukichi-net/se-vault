@@ -1,0 +1,21 @@
+# - crt-static: link the C runtime statically. The programs and the DLL need
+#   nothing but Windows itself (no vcruntime140.dll to be looked up next to them).
+# - /DEPENDENTLOADFLAG:0x800 (LOAD_LIBRARY_SEARCH_SYSTEM32): the DLLs a
+#   program imports are loaded when it starts, before it can harden itself.
+#   Without this flag Windows looks for those that are not "known DLLs"
+#   (ncrypt.dll, bcrypt.dll, tbs.dll, crypt32.dll, ...) in the program's own
+#   directory first, so a file with such a name next to se-env would run
+#   inside it. With the flag they come from System32 only.
+# - control-flow-guard: indirect calls may only go to real function entries.
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+  "-C", "target-feature=+crt-static",
+  "-C", "link-arg=/DEPENDENTLOADFLAG:0x800",
+  "-C", "control-flow-guard=yes",
+]
+[target.aarch64-pc-windows-msvc]
+rustflags = [
+  "-C", "target-feature=+crt-static",
+  "-C", "link-arg=/DEPENDENTLOADFLAG:0x800",
+  "-C", "control-flow-guard=yes",
+]

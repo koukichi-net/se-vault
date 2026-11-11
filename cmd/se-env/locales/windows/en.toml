@@ -1,0 +1,148 @@
+# Messages that differ on Windows. Everything else comes from ../en.toml, with
+# the names of the macOS parts swapped (platformText in sys_windows.go).
+
+help = '''se-env {{.Version}} — secrets in profiles, protected by a Windows Hello key (TPM)
+(age {{.AgeVersion}}, language: {{.Lang}}; set SE_ENV_LANG, LC_ALL, LC_MESSAGES or LANG to change)
+
+Usage:
+  se-env <command> [args...]
+
+Listing (no Touch ID: only the key-name index and the copy of public values are read,
+never a secret)
+  list [<profile>]              all profiles and key names as a tree (alias: tree)
+                                Public values are shown as "KEY = value"
+  profiles                      profile names, one per line
+  ls <profile>                  key names of a profile; public values as "KEY=value"
+  ls --verify <profile>         decrypt, show what the encrypted profile really holds, and
+                                rebuild the index and the copy of the public values
+                                (always Touch ID, even inside a session)
+
+Values
+  set <profile> <KEY>           add or replace a value. The value is read from (in order):
+                                  1. a hidden prompt on a terminal
+                                  2. standard input    e.g. Get-Clipboard | se-env set work GITHUB_TOKEN
+                                  3. a hidden dialog when neither is available
+                                Setting a key in an existing profile needs Touch ID
+  set --public <profile> <KEY> [<value>]
+                                add or replace a value that is NOT a secret (a URL, a user
+                                name, a region). It may be given on the command line.
+                                It is encrypted in the profile like every other key and
+                                handed to commands from there; a plaintext copy in
+                                vault/<profile>.public lets list and ls show it without
+                                Touch ID. Never use --public for a token or a password.
+                                e.g. se-env set --public work API_URL https://api.example.com
+                                     se-env exec work -- sh -c 'curl -H "Authorization: Bearer $API_TOKEN" "$API_URL/status"'
+  get <profile> <KEY>           print a value (Touch ID)
+                                Avoid it where output is recorded (logs, chat transcripts)
+  exec <profile> -- <cmd...>    run cmd with the profile's keys as environment variables (one Touch ID)
+                                Values reach only cmd's process, never your shell
+                                e.g. se-env exec work -- gh repo list
+  header <profile> <KEY> [--name <Header>] [--prefix <text>]
+                                print an HTTP header as JSON (Touch ID). Default:
+                                {"Authorization":"Bearer <value>"}. For tools that take headers
+                                as JSON from a command. --prefix '' for no prefix
+                                e.g. se-env header work API_TOKEN --name X-Api-Key --prefix ''
+
+Deleting (always Touch ID with the Secure Enclave key, even inside a session)
+  rm <profile> <KEY> [<KEY>...] remove keys. Nothing is removed if any key is missing
+  rm --all <profile>            remove every key, keep the empty profile (asks first)
+  rm-profile <profile>          remove an empty profile (asks first). Refuses while keys remain
+  rm-profile --force <profile>  remove a profile and its keys (asks first; cannot be undone)
+  Questions use y/N on a terminal, otherwise a dialog (default: cancel)
+
+Wiping everything (e.g. before resetting the PC)
+  destroy                       delete the Secure Enclave key and every secret. Cannot be undone
+                                deletes: identity.txt, vault/, run/
+                                keeps:   bin/, completions/ (se-env init starts over)
+                                steps: list what is lost, y/N, type a phrase, 10 s countdown,
+                                       Touch ID (never a session), delete and verify
+                                Runs only from an interactive terminal (not from pipes, dialogs,
+                                non-interactive tools, or inside a session)
+
+Sessions (skip Touch ID for a while)
+  session [--ttl 30m] [--only p1,p2] [-- <cmd...>]
+                                start cmd (default: your shell) in a session. Each profile asks
+                                for Touch ID on its first decryption only
+                                  --ttl   lifetime (e.g. 15m, 1h, 2h; default 30m, at most 24h)
+                                  --only  profiles that may be cached (others always ask)
+                                e.g. se-env session --only work -- claude
+  session status                same as `cache`
+  lock                          drop this session's cache (the next use asks again)
+
+  How it works: the `se-env session` process keeps the decrypted profiles in its own memory.
+  Nothing is written to disk and no key is put in the environment (SE_ENV_SESSION is only the
+  session ID). se-env asks that process over a socket under run/, and it answers only
+  processes started under cmd: they are in the session's job object and cannot leave it. It enforces the TTL and
+  --only itself and forgets everything when cmd exits or the TTL passes. Parallel requests
+  (e.g. several commands starting at once) share one Touch ID. Caution: every program started
+  under cmd can read the cached values without asking — including any tool or agent started
+  in it. Keep --only narrow and the TTL short.
+
+Session caches
+  cache                         this session: ID, command, expiry, scope, cached profiles
+  cache list                    every running session on this Mac (* = this session)
+                                Only metadata is shown; another session's values cannot be read
+  cache rm <ID>...              end sessions (Touch ID; at least 4 characters of the ID)
+  cache rm --current            end this session (Touch ID)
+  cache rm --all                end every session (Touch ID)
+                                An ended session asks for Touch ID every time until its command
+                                exits (`lock` only clears this session's cache, without Touch ID)
+
+Setup
+  init                          create the Secure Enclave key (once)
+  rekey                         make a new key and encrypt every profile to it again, then
+                                delete the old key (Touch ID once per profile). If it stops
+                                half-way, run it again: it continues where it stopped
+  help, -h, --help              this help
+  version                       version
+
+Names
+  profile   starts with a letter or digit; letters, digits and . _ -   e.g. work, personal, stg.work
+  KEY       starts with a letter or _; letters, digits and _ (a valid environment variable name)
+            Names that change how programs start are refused (PATH, PATHEXT, COMSPEC,
+            TEMP, SE_ENV_*, NODE_OPTIONS, ...; names differing only in case are the same name)
+
+Authentication
+  Every decryption asks for Windows Hello (face, fingerprint or PIN). The key is a Windows
+  Hello key protected by the TPM, and decryption happens inside it: the key cannot leave this
+  PC and never appears in se-env's memory. If you lose the PC or reset Windows Hello, the
+  vault cannot be decrypted: reissue your API keys and register them again.
+  Windows Hello cannot be shown over SSH or Remote Desktop.
+
+Files (paths used by this invocation)
+  program      {{.Self}}
+  home         {{.Home}}
+  key ref      {{.Identity}}
+  sessions     {{.Sessions}}   (sockets of running sessions; no secrets on disk)
+  vault        {{.Vault}}
+                 <profile>.age   ciphertext (lines of KEY=base64(value))
+                 <profile>.keys  key-name index (plaintext, no values)
+                 <profile>.public  copy of the public values (plaintext, display only)
+
+Changed public values
+  Every decryption compares vault/<profile>.public with the encrypted profile. If something
+  other than se-env changed or removed the copy, se-env runs nothing and prints nothing:
+  it reports the profile on stderr and in a dialog, and exits with status 3.
+  Check and repair with: se-env ls --verify <profile>
+  completion   {{.Completion}}
+                 (zsh only)
+  plugin       {{.Plugin}}
+               (<home>/bin first, then the absolute directories of PATH)
+  se-env stops if any of these is owned by someone else or others may write to it (ACL).
+
+Moving the home
+  Move the whole home (bin/, identity.txt, vault/ ...). The home is always "the directory
+  above the program", so no configuration changes are needed, and identity.txt does not
+  depend on its path. Only change PATH:
+    put <new home>\bin on PATH instead of the old one'''
+
+destroy_scope = '''  deletes: identity.txt, vault/ (all profiles), run/ (sessions)
+  keeps:   bin/, completions/ (se-env init starts over)
+
+  There is no way back. The Windows Hello key is deleted too; backups of the vault cannot be
+  decrypted any more.
+  Reissue the API keys at each service if you still need them.'''
+
+err_bad_identity = "{{.Path}} must hold exactly one Windows Hello key (AGE-PLUGIN-WINHELLO-1...) of this PC"
+err_unsafe_key = "key name {{.Name}} is refused: it changes how programs start (PATH, PATHEXT, COMSPEC, TEMP, SE_ENV_*, NODE_OPTIONS, ...; case is ignored)"
+err_key_unusable = "the Windows Hello key in {{.Path}} can no longer be used: {{.Detail}}. Removing the Windows Hello PIN or clearing the TPM destroys the key; profiles encrypted to it cannot be decrypted again"

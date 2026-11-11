@@ -11,10 +11,12 @@ import (
 	"golang.org/x/text/language"
 )
 
-//go:embed locales/*.toml
+//go:embed locales/*.toml locales/windows/*.toml
 var localeFS embed.FS
 
-// translator wraps a go-i18n localizer. Messages live in locales/<lang>.toml.
+// translator wraps a go-i18n localizer. Messages live in locales/<lang>.toml;
+// on Windows, locales/windows/<lang>.toml replaces the messages that differ
+// (and platformText swaps the names of the macOS parts).
 type translator struct {
 	bundle *i18n.Bundle
 	loc    *i18n.Localizer
@@ -24,11 +26,16 @@ type translator struct {
 func newBundle() *i18n.Bundle {
 	b := i18n.NewBundle(language.English)
 	b.RegisterUnmarshalFunc("toml", toml.Unmarshal)
-	entries, _ := localeFS.ReadDir("locales")
-	for _, e := range entries {
-		data, err := localeFS.ReadFile("locales/" + e.Name())
-		if err == nil {
-			b.MustParseMessageFileBytes(data, e.Name())
+	for _, dir := range append([]string{"locales"}, platformLocales...) {
+		entries, _ := localeFS.ReadDir(dir)
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			data, err := localeFS.ReadFile(dir + "/" + e.Name())
+			if err == nil {
+				b.MustParseMessageFileBytes(data, e.Name())
+			}
 		}
 	}
 	return b
@@ -41,14 +48,15 @@ func newTranslator() *translator {
 }
 
 // detectLang returns a BCP 47 tag from SE_ENV_LANG, LC_ALL, LC_MESSAGES or LANG
-// (first non-empty wins, as in POSIX). "C"/"POSIX" mean English.
+// (first non-empty wins, as in POSIX). "C"/"POSIX" mean English. Without any
+// of them: English on macOS, the user's display language on Windows.
 func detectLang() string {
 	for _, k := range []string{"SE_ENV_LANG", "LC_ALL", "LC_MESSAGES", "LANG"} {
 		if v := os.Getenv(k); v != "" {
 			return normalizeLocale(v)
 		}
 	}
-	return "en"
+	return systemLang()
 }
 
 func normalizeLocale(v string) string {
@@ -78,7 +86,7 @@ func (t *translator) S(id string, kv ...any) string {
 	if err != nil || s == "" {
 		return id
 	}
-	return s
+	return platformText(s)
 }
 
 // N localizes a message with plural forms selected by count. "Count" is set automatically.
@@ -89,7 +97,7 @@ func (t *translator) N(id string, count int, kv ...any) string {
 	if err != nil || s == "" {
 		return id
 	}
-	return s
+	return platformText(s)
 }
 
 // messageIDs lists the IDs with the given prefix, sorted (used by `__complete msgs`).

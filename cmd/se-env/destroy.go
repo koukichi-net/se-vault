@@ -4,10 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -105,16 +103,24 @@ func (a *app) cmdDestroy(args []string) error {
 	}
 
 	// 6. delete and verify; do not leave a half-deleted state
-	signal.Ignore(syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTSTP)
+	ignoreInterrupts()
 	for _, si := range a.sessions() { // running sessions hold decrypted profiles in memory
 		a.endSession(si.ID)
 	}
+	// Windows: Hello keys live outside the identity files.
+	for _, p := range []string{a.identityPath, a.oldIdentityPath(), a.newIdentityPath()} {
+		if l, err := a.identityLineAt(p); err == nil {
+			a.deleteKeyLine(l)
+		}
+	}
+	os.Remove(a.oldIdentityPath())
+	os.Remove(a.newIdentityPath())
 	legacyRecipient := filepath.Join(a.home, "recipient.txt") // written by se-env 0.4 and earlier
 	os.RemoveAll(a.vault)
 	os.RemoveAll(a.runDir)
 	os.Remove(a.identityPath)
 	os.Remove(legacyRecipient)
-	signal.Reset(syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTSTP)
+	restoreInterrupts()
 	var left []string
 	for _, p := range []string{a.identityPath, legacyRecipient, a.vault, a.runDir} {
 		if exists(p) {
