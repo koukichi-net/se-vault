@@ -4,7 +4,7 @@ English | [日本語](encryption.ja.md)
 
 This document describes what se-env stores, how it is encrypted and decrypted, how sessions work, and what is (and is not) protected. se-env is a Go program. All cryptography is done by the [age](https://github.com/FiloSottile/age) library (format v1), linked into the binary, and by [age-plugin-se](https://github.com/remko/age-plugin-se), which talks to the Secure Enclave through Apple's CryptoKit. age runs the plugin as a separate process through its plugin protocol.
 
-## 1. Components
+## 1. Components and how they work together
 
 | Piece | Role |
 |---|---|
@@ -12,6 +12,124 @@ This document describes what se-env stores, how it is encrypted and decrypted, h
 | age-plugin-se | age plugin that creates SE keys and asks the SE to perform key agreement. |
 | age (library) | Encrypts and decrypts files: header with one stanza per recipient, plus an authenticated payload. |
 | se-env | Manages profiles, keeps values in memory, hands them to commands through environment variables, and runs sessions. |
+| Agent | The `se-env session` process. For the life of a session it keeps decrypted profiles in memory and hands them only to se-env processes running inside the session (§6). |
+| Caller | The program that starts se-env: a terminal shell, or a tool that runs commands for you such as Claude Code. |
+
+### Overview
+
+Who starts what, and where Touch ID is asked for. Dotted lines are used only with a session.
+
+```mermaid
+flowchart TB
+    user(["You"])
+    se{{"Secure Enclave<br/>holds the private key"}}
+    subgraph mac["This Mac (everything runs as you)"]
+        agent["Agent<br/>se-env session"]
+        caller["Caller<br/>shell, Claude Code, ..."]
+        seenv["se-env<br/>get, exec, header, set, ..."]
+        plugin["age-plugin-se"]
+        files[("Files in the home<br/>identity.txt, vault/")]
+        cmd["Command started by exec"]
+    end
+    user -- "types a command" --> caller
+    agent -. "starts" .-> caller
+    caller -- "starts" --> seenv
+    seenv <-. "decrypted profiles<br/>run/ID.sock" .-> agent
+    seenv -- "reads and writes" --> files
+    seenv -- "starts as an age plugin" --> plugin
+    plugin -- "asks for key agreement" --> se
+    se -- "Touch ID / password prompt" --> user
+    seenv -- "passes values as environment variables" --> cmd
+```
+
+- The private key never leaves the Secure Enclave. age-plugin-se receives the result of the key agreement, and se-env receives the file key unwrapped with it (§5).
+- The prompt comes from the Secure Enclave. Neither se-env nor the agent has a way to use the key without it. Inside a session there is no prompt because the key is not used: the agent hands over the plaintext it holds in memory.
+
+### Running a command (no session)
+
+`se-env exec work -- gh repo list` as an example. `get` and `header` differ only in how the value is handed over at the end (§5).
+
+```mermaid
+sequenceDiagram
+    actor U as You
+    participant C as Caller
+    participant S as se-env
+    participant F as Files in the home
+    participant P as age-plugin-se
+    participant SE as Secure Enclave
+    participant X as gh
+    C->>S: se-env exec work -- gh repo list
+    S->>F: read identity.txt, work.age and work.public
+    S->>P: start it and pass the recipient stanza of work.age
+    P->>SE: ask for key agreement
+    SE->>U: Touch ID / password prompt
+    U-->>SE: approve
+    SE-->>P: key agreement result
+    P-->>S: file key
+    S->>S: decrypt and authenticate the payload, check the copy of public values
+    S->>X: exec with the values as environment variables (se-env becomes gh)
+```
+
+The ciphertext format and the key derivation are in §4 and §5.
+
+### Inside a session
+
+claude, started with `se-env session --only work -- claude`, runs se-env twice. Only the first run asks for Touch ID.
+
+```mermaid
+sequenceDiagram
+    actor U as You
+    participant A as Agent
+    participant C as claude
+    participant S1 as se-env (1st)
+    participant S2 as se-env (2nd)
+    participant SE as age-plugin-se and Secure Enclave
+    U->>A: se-env session --only work -- claude
+    A->>A: listen on run/SESSION_ID.sock
+    A->>C: start it with SE_ENV_SESSION=SESSION_ID
+    C->>S1: se-env exec work -- gh repo list
+    S1->>A: connect and ask for work
+    Note over S1,A: each side checks the other<br/>agent: same user, descends from claude, started before the connection<br/>se-env: same user, is its ancestor
+    A-->>S1: work is not held yet, so hand over the lock for work
+    S1->>SE: decrypt (as without a session)
+    SE->>U: Touch ID / password prompt
+    U-->>SE: approve
+    SE-->>S1: file key
+    S1->>A: plaintext and the SHA-256 of work.age
+    S1->>S1: exec gh
+    C->>S2: se-env get work TOKEN
+    S2->>A: connect and ask for work
+    A->>A: hash work.age again (if it changed, wipe the plaintext and answer as if not held)
+    A-->>S2: plaintext and SHA-256 (no Touch ID)
+    S2->>S2: compare the SHA-256 with the work.age it read, check the copy of public values, use the value
+    Note over A: wipes the plaintext on expiry, se-env lock, or when claude exits
+```
+
+Who the agent hands profiles to, and when a session ends, are in §6.
+
+### Saving a value
+
+`se-env set work TOKEN`. Encryption uses only the public key, so Touch ID is asked for only to read an existing profile.
+
+```mermaid
+sequenceDiagram
+    actor U as You
+    participant S as se-env
+    participant F as Files in the home
+    participant P as age-plugin-se and Secure Enclave
+    U->>S: se-env set work TOKEN
+    S->>U: ask for the value (hidden)
+    U-->>S: value
+    S->>F: lock work
+    opt work.age already exists
+        S->>P: decrypt the current contents (Touch ID, unless the session holds it)
+    end
+    S->>P: derive the public key from identity.txt (no Touch ID)
+    P-->>S: public key age1se1…
+    S->>S: encrypt to the public key (no Touch ID)
+    S->>F: replace work.age, work.public and work.keys
+    Note over S: if the session holds work, its plaintext is replaced with the new contents too
+```
 
 ## 2. Files
 

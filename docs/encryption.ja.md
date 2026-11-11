@@ -4,7 +4,7 @@
 
 この文書では、se-env が何を保存し、それをどう暗号化・復号するか、セッションがどう動くか、何を守り何を守らないかを説明します。se-env は Go のプログラムです。暗号処理はすべて、バイナリに組み込んだ [age](https://github.com/FiloSottile/age) のライブラリ（フォーマット v1）と [age-plugin-se](https://github.com/remko/age-plugin-se) が行います。age-plugin-se は Apple の CryptoKit を通じて Secure Enclave を使い、age のプラグインの仕組みで別のプロセスとして起動されます。
 
-## 1. 構成要素
+## 1. 構成要素と全体の流れ
 
 | 要素 | 役割 |
 |---|---|
@@ -12,6 +12,124 @@
 | age-plugin-se | SE の鍵を作り、SE に鍵共有の計算を依頼する age のプラグインです。 |
 | age（ライブラリ） | ファイルを暗号化・復号します。宛先ごとの「スタンザ」を並べたヘッダーと、改ざんを検知できる本体からなります。 |
 | se-env | プロファイルを管理し、値をメモリ上で扱い、環境変数でコマンドに渡し、セッションを動かします。 |
+| エージェント | `se-env session` のプロセスです。セッションの間、復号したプロファイルをメモリに保持し、セッションの中で動く se-env にだけ渡します（6章）。 |
+| 呼び出し元 | se-env を起動するプログラムです。ターミナルのシェルや、Claude Code のようにコマンドを実行するツールがこれに当たります。 |
+
+### 関係図
+
+誰が何を起動し、どこで Touch ID を求めるかを示します。点線はセッションを使うときだけの流れです。
+
+```mermaid
+flowchart TB
+    user(["ユーザー"])
+    se{{"Secure Enclave<br/>秘密鍵を保持"}}
+    subgraph mac["この Mac（すべて同じユーザーの権限で動く）"]
+        agent["エージェント<br/>se-env session"]
+        caller["呼び出し元<br/>シェル、Claude Code など"]
+        seenv["se-env<br/>get、exec、header、set など"]
+        plugin["age-plugin-se"]
+        files[("ホームのファイル<br/>identity.txt、vault/")]
+        cmd["exec で起動するコマンド"]
+    end
+    user -- "コマンドを入力する" --> caller
+    agent -. "起動する" .-> caller
+    caller -- "起動する" --> seenv
+    seenv <-. "復号したプロファイル<br/>run/セッションID.sock" .-> agent
+    seenv -- "読み書きする" --> files
+    seenv -- "起動する（age のプラグインの仕組み）" --> plugin
+    plugin -- "鍵共有の計算を依頼する" --> se
+    se -- "Touch ID / パスワードの確認" --> user
+    seenv -- "値を環境変数で渡す" --> cmd
+```
+
+- 秘密鍵は Secure Enclave の外に出ません。age-plugin-se が受け取るのは鍵共有の結果で、se-env が受け取るのは、そこから取り出したファイル鍵です（5章）。
+- 確認を求めるのは Secure Enclave です。se-env とエージェントには、確認なしに鍵を使う方法がありません。セッションの中で Touch ID が出ないのは、鍵を使わずに、エージェントのメモリにある平文を渡すためです。
+
+### コマンドを実行するとき（セッションなし）
+
+`se-env exec work -- gh repo list` の例です。`get` と `header` は、最後に値をどう渡すかだけが違います（5章）。
+
+```mermaid
+sequenceDiagram
+    actor U as ユーザー
+    participant C as 呼び出し元
+    participant S as se-env
+    participant F as ホームのファイル
+    participant P as age-plugin-se
+    participant SE as Secure Enclave
+    participant X as gh
+    C->>S: se-env exec work -- gh repo list
+    S->>F: identity.txt、work.age、work.public を読む
+    S->>P: 起動して、work.age の宛先スタンザを渡す
+    P->>SE: 鍵共有の計算を依頼する
+    SE->>U: Touch ID / パスワードの確認
+    U-->>SE: 承認する
+    SE-->>P: 鍵共有の結果
+    P-->>S: ファイル鍵
+    S->>S: 本体を復号して改ざんがないか確かめ、公開値の写しと照合する
+    S->>X: 値を環境変数にして exec する（se-env は gh に置き換わる）
+```
+
+暗号文の形式と鍵の計算は4章と5章で説明します。
+
+### セッションの中で使うとき
+
+`se-env session --only work -- claude` で起動した claude が、se-env を2回実行する例です。Touch ID を求めるのは1回目だけです。
+
+```mermaid
+sequenceDiagram
+    actor U as ユーザー
+    participant A as エージェント
+    participant C as claude
+    participant S1 as se-env（1回目）
+    participant S2 as se-env（2回目）
+    participant SE as age-plugin-se と Secure Enclave
+    U->>A: se-env session --only work -- claude
+    A->>A: run/セッションID.sock で待ち受ける
+    A->>C: SE_ENV_SESSION=セッションID を付けて起動する
+    C->>S1: se-env exec work -- gh repo list
+    S1->>A: 接続して work を求める
+    Note over S1,A: 互いに相手を確かめる<br/>エージェント: 同じユーザーで、claude の子孫で、接続より前に起動したか<br/>se-env: 同じユーザーで、自分の祖先か
+    A-->>S1: work をまだ持っていないので、work のロックを渡す
+    S1->>SE: 復号する（セッションなしのときと同じ）
+    SE->>U: Touch ID / パスワードの確認
+    U-->>SE: 承認する
+    SE-->>S1: ファイル鍵
+    S1->>A: 平文と work.age の SHA-256 を渡す
+    S1->>S1: gh を exec する
+    C->>S2: se-env get work TOKEN
+    S2->>A: 接続して work を求める
+    A->>A: work.age の SHA-256 を計算し直す（変わっていれば平文を消して、ないものとして答える）
+    A-->>S2: 平文と SHA-256（Touch ID なし）
+    S2->>S2: 受け取った SHA-256 をいま読んだ work.age と比べ、公開値の写しと照合して値を使う
+    Note over A: 期限切れ、se-env lock、claude の終了で平文を消す
+```
+
+エージェントがプロファイルを渡す相手の条件と、セッションが終わる条件は6章で説明します。
+
+### 値を保存するとき
+
+`se-env set work TOKEN` の流れです。暗号化には公開鍵しか使わないので、Touch ID を求めるのは、すでにあるプロファイルの中身を読むときだけです。
+
+```mermaid
+sequenceDiagram
+    actor U as ユーザー
+    participant S as se-env
+    participant F as ホームのファイル
+    participant P as age-plugin-se と Secure Enclave
+    U->>S: se-env set work TOKEN
+    S->>U: 値を尋ねる（伏せ字）
+    U-->>S: 値
+    S->>F: work のロックを取る
+    opt work.age がすでにある
+        S->>P: いまの中身を復号する（Touch ID。セッションが持っていれば不要）
+    end
+    S->>P: identity.txt から公開鍵を求める（Touch ID なし）
+    P-->>S: 公開鍵 age1se1…
+    S->>S: 公開鍵宛てに暗号化する（Touch ID なし）
+    S->>F: work.age、work.public、work.keys を置き換える
+    Note over S: セッションが work を持っていれば、その平文も新しい内容に置き換える
+```
 
 ## 2. ファイル
 
