@@ -69,12 +69,17 @@ func (a *app) cmdList(args []string) error {
 			continue
 		}
 		fmt.Println(a.t.N("list_profile", len(keys), "Name", p, "Updated", updated))
+		shown := a.publicValues(p)
 		for i, k := range keys {
 			branch := "├─"
 			if i == len(keys)-1 {
 				branch = "└─"
 			}
-			fmt.Printf("  %s %s\n", branch, k)
+			if v, ok := shown[k]; ok {
+				fmt.Printf("  %s %s = %s\n", branch, k, showValue(v))
+			} else {
+				fmt.Printf("  %s %s\n", branch, k)
+			}
 		}
 	}
 	return nil
@@ -103,11 +108,59 @@ func (a *app) cmdLs(args []string) error {
 		return err
 	}
 	keys, ok := a.indexKeys(p)
-	if verify || !ok {
+	shown := a.publicValues(p)
+	switch {
+	case verify:
+		// Always the Secure Enclave key, never a session: this is how the
+		// user sees for themselves what the encrypted profile holds, and how
+		// a copy that was changed outside kc-env is put right.
 		if err := a.requireInit(); err != nil {
 			return err
 		}
-		kv, err := a.load(p)
+		unlock, err := a.lockProfile(p)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		l, err := a.loadRaw(p, false, false)
+		if err != nil {
+			return err
+		}
+		if diff := publicDiff(l); len(diff) > 0 {
+			was, _, perr := parseProfileFull(l.pubCopy, true)
+			if perr != nil {
+				was = nil
+			}
+			side := func(v string, ok bool) string {
+				if !ok {
+					return a.t.S("word_none")
+				}
+				return showValue(v)
+			}
+			fmt.Fprintln(os.Stderr, "kc-env: "+a.t.S("verify_public_differs", "Name", p))
+			for _, k := range diff {
+				wv, wok := was[k]
+				fmt.Fprintln(os.Stderr, "  "+a.t.S("verify_public_diff", "Key", k,
+					"Shown", side(wv, wok), "Real", side(l.kv[k], l.pub[k])))
+			}
+			fmt.Fprintln(os.Stderr, "kc-env: "+a.t.S("verify_public_repaired", "Name", p))
+		}
+		if err := a.writePublicCopy(p, publicCopyOf(l.kv, l.pub)); err != nil {
+			return err
+		}
+		keys = sortedKeys(l.kv)
+		if err := a.writeIndex(p, keys); err != nil {
+			return err
+		}
+		shown = map[string]string{}
+		for k := range l.pub {
+			shown[k] = l.kv[k]
+		}
+	case !ok:
+		if err := a.requireInit(); err != nil {
+			return err
+		}
+		kv, _, err := a.loadProfile(p)
 		if err != nil {
 			return err
 		}
@@ -117,9 +170,28 @@ func (a *app) cmdLs(args []string) error {
 		}
 	}
 	for _, k := range keys {
-		fmt.Println(k)
+		if v, ok := shown[k]; ok {
+			fmt.Println(k + "=" + showValue(v))
+		} else {
+			fmt.Println(k)
+		}
 	}
 	return nil
+}
+
+// showValue makes a public value safe to print: it may come from the
+// plaintext copy, which anything running as the user can write.
+func showValue(v string) string {
+	v = strings.Map(func(r rune) rune {
+		if unicode.IsPrint(r) {
+			return r
+		}
+		return '?'
+	}, v)
+	if r := []rune(v); len(r) > 200 {
+		v = string(r[:200]) + "…"
+	}
+	return v
 }
 
 func (a *app) profileKeyArgs(args []string, usage string) (string, string, error) {
@@ -135,7 +207,19 @@ func (a *app) profileKeyArgs(args []string, usage string) (string, string, error
 	return args[0], args[1], nil
 }
 
+// set <profile> <KEY>  |  set --public <profile> <KEY> [<value>]
+//
+// A secret is never taken from the command line. A public value may be: it
+// is kept in plaintext next to the vault anyway.
 func (a *app) cmdSet(args []string) error {
+	public := false
+	if len(args) > 0 && args[0] == "--public" {
+		public, args = true, args[1:]
+	}
+	value, given := "", false
+	if public && len(args) == 3 {
+		value, given, args = args[2], true, args[:2]
+	}
 	p, k, err := a.profileKeyArgs(args, "usage_set")
 	if err != nil {
 		return err
@@ -146,27 +230,43 @@ func (a *app) cmdSet(args []string) error {
 	if err := a.requireInit(); err != nil {
 		return err
 	}
-	value, err := a.readSecret(p + "/" + k)
-	if err != nil {
-		return err
+	if !given {
+		if value, err = a.readSecret(p + "/" + k); err != nil {
+			return err
+		}
+	}
+	if value == "" {
+		return a.fail("err_empty_value")
 	}
 	if strings.ContainsRune(value, 0) {
 		return a.fail("err_value_nul")
+	}
+	if public && strings.IndexFunc(value, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+		return a.fail("err_public_value")
 	}
 	unlock, err := a.lockProfile(p)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	kv, err := a.load(p)
+	kv, pub, err := a.loadProfile(p)
 	if err != nil {
 		return err
 	}
 	kv[k] = value
-	if err := a.save(p, kv); err != nil {
+	if public {
+		pub[k] = true
+	} else {
+		delete(pub, k)
+	}
+	if err := a.saveProfile(p, kv, pub); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, a.t.S("msg_set", "Profile", p, "Key", k))
+	if public {
+		fmt.Fprintln(os.Stderr, a.t.S("msg_set_public", "Profile", p, "Key", k))
+	} else {
+		fmt.Fprintln(os.Stderr, a.t.S("msg_set", "Profile", p, "Key", k))
+	}
 	return nil
 }
 
@@ -370,7 +470,7 @@ func (a *app) cmdRm(args []string) error {
 		return err
 	}
 	defer unlock()
-	kv, err := a.loadFresh(p, true) // Touch ID; refused key names stay removable
+	kv, pub, err := a.loadFreshProfile(p, true) // Touch ID; refused key names stay removable
 	if err != nil {
 		return err
 	}
@@ -381,8 +481,9 @@ func (a *app) cmdRm(args []string) error {
 	}
 	for _, k := range keys {
 		delete(kv, k)
+		delete(pub, k)
 	}
-	if err := a.save(p, kv); err != nil {
+	if err := a.saveProfile(p, kv, pub); err != nil {
 		return err
 	}
 	for _, k := range keys {
@@ -461,7 +562,9 @@ func (a *app) cmdRmProfile(args []string) error {
 	}
 	os.Remove(a.profileFile(p))
 	os.Remove(a.indexFile(p))
+	os.Remove(a.publicFile(p))
 	os.Remove(a.lockFile(p))
+	os.Remove(a.alertFile(p))
 	if s := a.activeSession(); s != nil {
 		s.forget(p)
 	}

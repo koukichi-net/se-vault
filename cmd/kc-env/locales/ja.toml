@@ -9,11 +9,13 @@ kc-env {{.Version}} — Secure Enclave（Touch ID）で保護したAPIキーを�
 使い方:
   kc-env <コマンド> [引数...]
 
-一覧・確認（Touch ID 不要。キー名の索引を読むだけで、値は読みません）
+一覧・確認（Touch ID 不要。読むのはキー名の索引と公開値の写しだけで、秘密の値は読みません）
   list [<profile>]              全プロファイルとキー名をツリー表示（別名: tree）
+                                公開値は「KEY = 値」の形で表示
   profiles                      プロファイル名だけを1行ずつ表示
-  ls <profile>                  そのプロファイルのキー名を表示
-  ls --verify <profile>         実際に復号してキー名を確認し、索引を作り直す（Touch ID）
+  ls <profile>                  そのプロファイルのキー名を表示。公開値は「KEY=値」の形
+  ls --verify <profile>         実際に復号して、暗号化された正本の内容を表示し、索引と
+                                公開値の写しを作り直す（セッションの中でも必ず Touch ID）
 
 値の操作
   set <profile> <KEY>           追加または上書き。値の受け取り方（優先順）:
@@ -21,6 +23,15 @@ kc-env {{.Version}} — Secure Enclave（Touch ID）で保護したAPIキーを�
                                   2. パイプなら標準入力   例: pbpaste | kc-env set work GITHUB_TOKEN
                                   3. どちらもなければ伏せ字のダイアログ
                                 既存プロファイルへの set は復号を伴うため Touch ID が必要
+  set --public <profile> <KEY> [<値>]
+                                秘密ではない値（URL、ユーザー名、リージョンなど）を追加または
+                                上書き。値はコマンドラインに書ける。
+                                ほかのキーと同じくプロファイルの中に暗号化して保存し、コマンド
+                                にはそこから渡す。vault/<profile>.public に平文の写しを置くので、
+                                list と ls は Touch ID なしで値を表示できる。
+                                トークンやパスワードには --public を絶対に使わないこと。
+                                例: kc-env set --public work API_URL https://api.example.com
+                                    kc-env exec work -- sh -c 'curl -H "Authorization: Bearer $API_TOKEN" "$API_URL/status"'
   get <profile> <KEY>           値を標準出力へ（Touch ID）
                                 ※ 出力が記録される場所（ログやチャットの履歴など）では使わない
   exec <profile> -- <cmd...>    プロファイルのキーを環境変数にして cmd を実行（Touch ID 1回）
@@ -106,6 +117,13 @@ kc-env {{.Version}} — Secure Enclave（Touch ID）で保護したAPIキーを�
   保管庫       {{.Vault}}
                  <profile>.age   暗号文（中身は KEY=base64(値) の行）
                  <profile>.keys  キー名の索引（平文。値は含まない）
+                 <profile>.public  公開値の写し（平文。表示専用）
+
+公開値が書き換えられたとき
+  復号のたびに、vault/<profile>.public を暗号化された正本と照合します。kc-env 以外のものが
+  写しを書き換えたり消したりしていた場合、kc-env は何も実行せず、何も出力しません。
+  標準エラーとダイアログでプロファイル名を知らせ、終了コード 3 で終わります。
+  確認と修復: kc-env ls --verify <profile>
   補完（zsh）  {{.Completion}}
                  ~/.zshrc で oh-my-zsh（compinit）より前に fpath へ追加して使う
   プラグイン   {{.Plugin}}
@@ -133,6 +151,7 @@ err_invalid_key = "キー名が正しくありません: {{.Name}}"
 err_unsafe_key = "キー名 {{.Name}} は使えません。プログラムの起動のしかたを変える名前です（PATH, HOME, DYLD_*, LD_*, KC_ENV_*, NODE_OPTIONS など）"
 err_unsafe_key_in_profile = "プロファイル {{.Name}} に、使えないキー名 {{.Key}} が入っています。コマンドには渡しません。kc-env rm {{.Name}} {{.Key}} で削除してください"
 err_value_nul = "値に NUL バイトが含まれています。環境変数には入れられません"
+err_public_value = "公開値に使えるのは、1行の表示できる文字だけです（改行や制御文字は使えません）"
 err_bad_identity = "{{.Path}} には、このMacの Secure Enclave 鍵（AGE-PLUGIN-SE-1...）を1行だけ置いてください"
 err_unsafe_perms = "権限が安全ではありません: {{.Path}}（所有者は自分で、グループや他人が書き込めないようにしてください）"
 err_socket_path = "セッション用ソケットのパスが長すぎます: {{.Path}}（ホームをもっと短いパスに置いてください）"
@@ -173,7 +192,7 @@ err_rm_profile_has_keys = "プロファイル '{{.Name}}' にはまだ {{.Count}
 
 # ---- 使い方 ----
 usage_ls = "使い方: kc-env ls [--verify] <profile>"
-usage_set = "使い方: kc-env set <profile> <KEY>"
+usage_set = "使い方: kc-env set <profile> <KEY>  または  kc-env set --public <profile> <KEY> [<値>]（コマンドラインに値を書けるのは公開値だけ）"
 usage_get = "使い方: kc-env get <profile> <KEY>"
 usage_header = "使い方: kc-env header <profile> <KEY> [--name <Header>] [--prefix <text>]"
 usage_exec = "使い方: kc-env exec <profile> -- <command...>"
@@ -189,6 +208,7 @@ prompt_value = "{{.Label}} の値: "
 dialog_value = "{{.Label}} の値"
 button_cancel = "キャンセル"
 button_delete = "削除"
+button_ok = "OK"
 prompt_auth = "Touch ID（またはパスワード）で本人確認をしてください"
 msg_waiting_auth = "Touch ID / パスワードを待っています..."
 confirm_rm_all = "プロファイル '{{.Name}}' のキー {{.Count}} 個をすべて削除しますか？（空のプロファイルは残ります）"
@@ -198,6 +218,23 @@ confirm_rm_profile_force = "プロファイル '{{.Name}}' と中のキー {{.Co
 # ---- 結果 ----
 msg_initialized = "初期化しました: {{.Home}}"
 msg_set = "保存しました: {{.Profile}}/{{.Key}}"
+msg_set_public = "公開値として保存しました: {{.Profile}}/{{.Key}}（プロファイルの中に暗号化して保存し、表示用に平文の写しを置きました）"
+
+# ---- 公開値が kc-env の外で書き換えられたとき ----
+alert_tampered = """
+kc-env: 警告: 改ざんの疑いがあります。コマンドは実行していません。
+  プロファイル {{.Name}} の公開値の写し（{{.Path}}）が、
+  暗号化された正本と一致しません。kc-env 以外のものが、写しを書き換えたか削除しています。
+  食い違っているキー: {{.Keys}}
+  確認と修復: kc-env ls --verify {{.Name}}
+    Touch ID で正本を復号して食い違いの内容を表示し、写しを正本から作り直します。
+    正本の値が自分で登録したものと違う場合は、保管庫に書き込めるものを突き止めるまで、
+    このプロファイルを使わないでください。"""
+alert_tampered_title = "kc-env: 改ざんの疑いがあります"
+alert_tampered_dialog = "プロファイル {{.Name}} の公開値の写しが、暗号化された正本と一致しません（{{.Keys}}）。kc-env 以外のものが書き換えています。\n\nコマンドは実行していません。ターミナルで次を実行して確認してください。\nkc-env ls --verify {{.Name}}"
+verify_public_differs = "{{.Name}} の公開値の写しが、暗号化された正本と違っていました:"
+verify_public_diff = "{{.Key}}: 写しは {{.Shown}}、正本は {{.Real}}"
+verify_public_repaired = "写しを正本から作り直しました。正本の値が自分で登録したものと違う場合は、何が書き換えたのかが分かるまで、プロファイル {{.Name}} を使わないでください"
 msg_removed_key = "削除しました: {{.Profile}}/{{.Key}}"
 msg_removed_all = "{{.Name}} のキーをすべて削除しました"
 msg_removed_profile = "プロファイル {{.Name}} を削除しました"
@@ -257,10 +294,10 @@ destroy_profile_line = "{{.Name}}  （キー {{.Count}} 個）"
 destroy_done = "削除しました: 鍵、{{.Profiles}} 個のプロファイル、{{.Keys}} 個のキー。もう一度使うときは: kc-env init"
 
 # ---- シェル補完（固定文。プレースホルダーなし） ----
-comp_cmd_list = "全プロファイルとキー名をツリー表示（Touch ID 不要）"
+comp_cmd_list = "全プロファイルとキー名、公開値をツリー表示（Touch ID 不要）"
 comp_cmd_tree = "list の別名"
 comp_cmd_profiles = "プロファイル名を表示"
-comp_cmd_ls = "プロファイルのキー名を表示"
+comp_cmd_ls = "プロファイルのキー名と公開値を表示"
 comp_cmd_set = "キーを追加・上書き"
 comp_cmd_get = "値を表示（Touch ID）"
 comp_cmd_header = "HTTP ヘッダーを JSON で出力（Touch ID）"
@@ -274,9 +311,10 @@ comp_cmd_init = "Secure Enclave 鍵を作成（初回のみ）"
 comp_cmd_destroy = "鍵とすべてのキーを完全に削除（端末から直接・Touch ID 必須）"
 comp_cmd_help = "ヘルプを表示"
 comp_cmd_version = "バージョンを表示"
-comp_opt_verify = "復号して確認し、索引を作り直す（Touch ID）"
+comp_opt_verify = "復号して確認し、索引と公開値の写しを作り直す（必ず Touch ID）"
 comp_opt_force = "中のキーごと削除する"
 comp_opt_all = "プロファイル内のキーをすべて削除（プロファイルは残す）"
+comp_opt_public = "秘密ではない値として保存し、表示用に平文の写しを置く"
 comp_opt_name = "ヘッダー名（既定 Authorization）"
 comp_opt_prefix = "値の前に付ける文字列（既定 \"Bearer \"）"
 comp_opt_ttl = "有効期限（既定 30m、最長 24h）"

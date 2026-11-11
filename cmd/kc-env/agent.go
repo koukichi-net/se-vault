@@ -40,6 +40,7 @@ type request struct {
 type response struct {
 	OK   bool         `json:"ok"`
 	Hit  bool         `json:"hit,omitempty"`
+	Sum  string       `json:"sum,omitempty"` // with a hit: SHA-256 of the vault file the data came from
 	Data []byte       `json:"data,omitempty"`
 	Info *sessionInfo `json:"info,omitempty"`
 }
@@ -355,9 +356,9 @@ func (ag *agent) handle(c *net.UnixConn, accepted time.Time) {
 			if held != "" || !member || !ag.allows(rq.Profile) || ag.over() || !ag.lock(rq.Profile) {
 				break
 			}
-			if data, ok := ag.lookup(rq.Profile); ok {
+			if data, sum, ok := ag.lookup(rq.Profile); ok {
 				ag.unlock(rq.Profile)
-				rs = response{OK: true, Hit: true, Data: data}
+				rs = response{OK: true, Hit: true, Sum: sum, Data: data}
 			} else {
 				held = rq.Profile
 				rs.OK = true
@@ -390,20 +391,20 @@ func (ag *agent) handle(c *net.UnixConn, accepted time.Time) {
 
 // lookup returns a copy of the cached profile if it still matches the vault
 // file. A stale entry is wiped at once.
-func (ag *agent) lookup(p string) ([]byte, bool) {
+func (ag *agent) lookup(p string) (data []byte, sum string, ok bool) {
 	sum, err := fileSHA256(ag.a.profileFile(p))
 	ag.mu.Lock()
 	defer ag.mu.Unlock()
 	e := ag.entries[p]
 	if e == nil {
-		return nil, false
+		return nil, "", false
 	}
 	if err != nil || e.sum != sum {
 		wipe(e.data)
 		delete(ag.entries, p)
-		return nil, false
+		return nil, "", false
 	}
-	return append([]byte(nil), e.data...), true
+	return append([]byte(nil), e.data...), sum, true
 }
 
 // store keeps a profile. With refreshOnly it replaces an existing entry and

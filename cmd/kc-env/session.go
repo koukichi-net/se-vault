@@ -128,6 +128,7 @@ type lease struct {
 	ac      *agentConn
 	profile string
 	hit     bool
+	sum     string // with a hit: SHA-256 of the vault file the data came from
 	data    []byte
 }
 
@@ -143,7 +144,7 @@ func (s *session) acquire(p string) *lease {
 		ac.c.Close()
 		return nil
 	}
-	return &lease{ac: ac, profile: p, hit: rs.Hit, data: rs.Data}
+	return &lease{ac: ac, profile: p, hit: rs.Hit, sum: rs.Sum, data: rs.Data}
 }
 
 // put hands a freshly decrypted profile to the session and releases the lock.

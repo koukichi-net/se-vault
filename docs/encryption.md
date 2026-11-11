@@ -20,6 +20,7 @@ This document describes what kc-env stores, how it is encrypted and decrypted, h
 | `identity.txt` | Exactly one `AGE-PLUGIN-SE-1…` line: an opaque blob for the SE key, plus comments (creation date, access control, public key). The blob can be used only by the Secure Enclave of the Mac that created it. | Not usable elsewhere, but **required**: without it the vault cannot be decrypted. |
 | `vault/<profile>.age` | age-encrypted profile. | Encrypted |
 | `vault/<profile>.keys` | Key names of the profile, one per line. Only a hint for listing. | **Plaintext** names, no values |
+| `vault/<profile>.public` | Copy of the public values of the profile (§4), for display. Exists only if the profile has one. | **Plaintext**. Holds only values stored with `--public` |
 | `vault/.<profile>.lock` | Empty lock file, so two commands cannot change one profile at the same time. | No |
 | `run/<id>.sock` | Unix socket of a running session (see §6). | No. Nothing secret is on disk |
 
@@ -72,6 +73,29 @@ age:  file key = 16 random bytes
 
 The recipient is always the single public key derived from `identity.txt`. Encryption uses only that **public** key, so it needs no Touch ID. This is why the first `set` into a new profile does not prompt.
 
+### Public values
+
+`set --public` stores a value that is not a secret, such as the URL a token is meant for. In the encrypted text its line starts with `+`:
+
+```
+API_TOKEN=<base64(value)>
++API_URL=<base64(value)>
+```
+
+So the value, and the fact that it is public, are covered by the same encryption as the secrets. This encrypted line is the only source of the value that `get`, `exec` and `header` use.
+
+kc-env also writes the public lines, without the `+`, to `vault/<profile>.public`. This plaintext copy lets `list` and `ls` show the values without Touch ID. Nothing else reads it, and a copy with anything unexpected in it is not shown at all.
+
+The copy is still watched, because a change to it means that something other than kc-env wrote to the vault:
+
+- A writer replaces the ciphertext and the copy while it holds the profile lock. A reader takes the same lock shared and reads both, so it always sees a matching pair. Inside a session, the agent says which ciphertext its answer came from (the SHA-256), and kc-env compares that with the file it has just read; if they differ it asks again.
+- After every decryption, and for every answer from a session, kc-env compares the copy with the public lines of the decrypted profile, byte for byte. A missing copy counts as empty.
+- If they differ, kc-env stops before it uses any value. It prints the profile and the keys that differ to standard error, opens a critical alert, and exits with status 3. The command given to `exec` is not started, and `get` and `header` print nothing. `set` and `rm` are refused as well.
+- The alert is a separate process that stays on screen after kc-env has exited, because kc-env is often run by a program that never shows its standard error. While it is on screen it holds a lock for the profile, so repeated failures do not stack up alerts.
+- `kc-env ls --verify <profile>` is the way out. It always decrypts with the Secure Enclave key, never from a session, prints each difference (what the copy said, and what the encrypted profile holds), and rebuilds the copy and the key-name index.
+
+A profile without public values is byte for byte what kc-env 0.5 wrote. A profile with one cannot be read by 0.5, which reports a corrupt profile.
+
 ### Key names
 
 A profile is handed to commands as environment variables, so a key name must be a valid variable name. Names that change how a program is loaded or started are refused: `PATH`, `HOME`, `SHELL`, `IFS`, `ENV`, `BASH_ENV`, `ZDOTDIR`, `NODE_OPTIONS`, `PYTHONPATH`, `PYTHONSTARTUP`, `PERL5OPT`, `RUBYOPT`, `GIT_SSH_COMMAND`, `AGEDEBUG`, and everything starting with `DYLD_`, `LD_` or `KC_ENV_`. The same check runs when a profile is read: a profile that contains such a name, a malformed name, a duplicate name, or a value with a NUL byte is not handed to any command. `kc-env rm <profile> <KEY>` can still remove the offending key. The list is a safety net, not a complete catalogue of dangerous variables.
@@ -99,9 +123,9 @@ What kc-env does with the result:
 | `exec` | adds every key to the environment, then `exec`s the command, which inherits them |
 | `header` | prints `{"<name>":"<prefix><value>"}` (JSON-encoded) |
 | `set` / `rm` on an existing profile | modifies the pairs and re-encrypts (§4) |
-| `ls --verify` | rebuilds the key-name index |
+| `ls --verify` | shows the key names and public values the profile really holds, and rebuilds the key-name index and the copy of the public values. Always uses the SE key |
 
-`list`, `ls`, `profiles` and Tab completion read only file names and the `.keys` index. They never decrypt, so they never prompt. The index is not authenticated: it is used for display only, and a line that is not a key name makes kc-env ignore the whole index.
+`list`, `ls`, `profiles` and Tab completion read only file names, the `.keys` index and the `.public` copy. They never decrypt, so they never prompt. Neither file is authenticated: both are used for display only. A line that is not a key name makes kc-env ignore the whole index, and a malformed copy is not shown.
 
 The plugin is started by name through `PATH`, so kc-env narrows its own `PATH` to the single directory that holds the plugin (`<home>/bin` first, then the absolute directories of your `PATH`). Commands started by `exec` and `session` get your original `PATH` back. kc-env also removes `AGEDEBUG` from its environment, because with `AGEDEBUG=plugin` the age library would print the plugin protocol, file key included, to stderr. The dialog helper is always `/usr/bin/osascript`, never looked up on `PATH`.
 
@@ -165,6 +189,7 @@ These checks stop kc-env itself from being used to delete secrets unattended (fo
 - Session limits: the TTL and `--only` live in the agent. A process inside the session cannot extend or widen them.
 - Tampering with ciphertext: age authenticates the header and payload. A modified file fails to decrypt.
 - A changed public key: profiles are encrypted only to the key derived from `identity.txt`. No file can add a second recipient.
+- Where a secret is sent: a public value such as a URL reaches a command only from the encrypted profile, never from the plaintext copy. Editing the copy cannot redirect a token. The edit is noticed at the next decryption: kc-env runs nothing, alerts you, and exits with status 3 (§4).
 - Command lines: values are never put in a command's arguments, which every user of the Mac can see with `ps`. They are kept in memory and passed to commands only through environment variables.
 
 ### Not protected, or limits
@@ -176,6 +201,8 @@ These checks stop kc-env itself from being used to delete secrets unattended (fo
 - Secrets exported somewhere else: kc-env cannot protect a copy of a secret that is still exported in a shell startup file, or set in a parent process. Such a value is in the environment of every program you start. After moving a secret into kc-env, remove the old `export`, then reissue the secret and restart your terminals and long-running programs: a running process keeps the environment it was started with, even after the startup file is fixed.
 - Malware running as you can wait for you to approve a prompt it triggered, or trick you into approving one. It can also replace the kc-env program, the plugin or `identity.txt` (all owned by you), and delete the vault. The prompt is a speed bump, not an isolation boundary.
 - There is no sender authentication: age proves a file was not modified, but not who created it. Anyone who can write to `vault/` could replace a profile with content encrypted to your public key, and kc-env would accept it, apart from the key names it refuses (§4). Keep the home directory writable only by you.
+- A replaced profile can carry its own public values and a matching copy, which the check in §4 cannot tell from a profile you wrote. It cannot contain your secrets, so the first sign is that a key is missing or a command fails to authenticate. Do not answer that by setting the secret again: run `kc-env ls --verify <profile>` first and read the public values, or the new secret would be used with whatever URL the replaced profile holds.
+- Public values are plaintext on disk (`.public`). Anything that can read your files can read them. What `list` and `ls` show comes from that copy and is unverified until the next decryption.
 - Key names are plaintext (`.keys`), so they can be listed without a prompt.
 - Password fallback: with `any-biometry-or-passcode`, the login password also satisfies the presence check.
 - Memory: Go cannot guarantee that every copy of a value is erased. kc-env overwrites the session cache when it is dropped and disables core dumps, but values may remain in freed memory until the process exits.
