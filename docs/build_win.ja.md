@@ -2,7 +2,7 @@
 
 [English](build_win.md) | 日本語
 
-macOS の手順は [build_mac.ja.md](build_mac.ja.md) にあります。Windows 版の設計は [design-windows-hello.ja.md](design-windows-hello.ja.md) で説明しています。
+macOS の手順は [build_mac.ja.md](build_mac.ja.md) にあります。Windows 版の仕組みは [encryption.ja.md の10章](encryption.ja.md#10-windows-での仕組み) で説明しています。
 
 Windows 版の se-env は、次の4つのファイルでできています。
 
@@ -15,7 +15,7 @@ Windows 版の se-env は、次の4つのファイルでできています。
 
 Rust の3つは、共通のクレート `win/sewin`（Windows API）と `win/winhello-core`（鍵の導出と形式。Windows に依存しない）を使います。
 
-ビルド用のスクリプトはありません。下のコマンドを PowerShell で、リポジトリの一番上のディレクトリから1つずつ実行してください。
+下のコマンドを PowerShell で、リポジトリの一番上のディレクトリから1つずつ実行してください。
 
 ## 必要なもの
 
@@ -43,7 +43,7 @@ cd ..
 
 - `--locked`：`Cargo.lock` に書かれたバージョンとハッシュのクレートだけを使う。`Cargo.lock` は書き換えない
 - C ランタイムは静的にリンクします（`win/.cargo/config.toml`）。できたファイルは Windows 以外の DLL を必要としません。se-env は起動後に「Microsoft の署名がある DLL だけ読み込む」設定にするので、これは必須です
-- 同じファイルで、インポートする DLL を System32 だけから読み込む指定（`/DEPENDENTLOADFLAG:0x800`）と、Control Flow Guard を有効にしています。前者がないと、`ncrypt.dll` や `tbs.dll` などが、プログラムと同じディレクトリから先に探されます。ビルドしたあと `dumpbin /loadconfig` で `Dependent Load Flag` が `0800` であることを確かめられます
+- 同じファイルで、インポートする DLL を System32 だけから読み込む指定（`/DEPENDENTLOADFLAG:0x800`）と、Control Flow Guard を有効にしています。ビルドしたあと `dumpbin /loadconfig` で `Dependent Load Flag` が `0800` であることを確かめられます
 - `cargo test` は、プロセスの保護（ASLR などの緩和ポリシー）が実際に有効になることも確かめます
 - `winhello-core` のテストは macOS や Linux でも実行できます（`cargo test -p winhello-core`）
 
@@ -81,12 +81,6 @@ se-env init       # Windows Hello の鍵を作る（最初の1回だけ。Window
 - ホームは常に `se-env.exe` の1つ上のディレクトリです。`%LOCALAPPDATA%` の下なら、ACL は最初から自分、SYSTEM、Administrators だけです
 - se-env は、ホーム、`bin`、4つのファイル、`identity.txt`、`vault`、`run` の所有者が自分（または SYSTEM、Administrators）で、ほかの人が書き込めないことを確かめます。そうでなければ動作を止めます。`init` は `vault` に、継承を切った ACL を付けます
 - `se_env_win.dll` は必ず `se-env.exe` と同じディレクトリに置いてください。se-env はほかの場所を探しません
-
-## 使える場面
-
-- Windows Hello の確認は、PC の前でログオンしているデスクトップにしか出ません。SSH やリモートデスクトップの中からは、鍵の作成（`init`、`rekey`）も復号もできません。リモートデスクトップでは `0x80090010`（アクセス拒否）で失敗します。
-- `se-env session` の中で起動したプログラムは、セッションの Job Object から抜けられません。子プロセスの起動に `CREATE_BREAKAWAY_FROM_JOB` を使うプログラムは、セッションの中では起動に失敗します（Git for Windows の `sh`、PowerShell、cmd、Node.js、Claude Code では問題がないことを確かめています）。
-- 逆に、Windows が別に起動するプログラムはセッションに入りません。セッションの中から Windows Terminal の新しいウィンドウを開いても、その中のシェルはセッションの外です。Windows Terminal では、タブの中で `se-env session` を起動してください。
 
 ## 更新するとき
 

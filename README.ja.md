@@ -19,7 +19,7 @@ se-env exec work -- gh repo list          # Touch ID 1回。値は gh にだけ�
 - セッション（任意）では指定したプロファイルを一定時間メモリに保持します。まとまった作業でも Touch ID は1回で済みます。使えるのは、セッションの中で起動したプログラムだけです。
 - 削除には、セッションの中でも必ず Touch ID を求めます。
 - 秘密ではない設定（URL やユーザー名）は、公開値として秘密と同じプロファイルに保存できます。公開値は Touch ID なしで表示でき、平文の写しが se-env の外で書き換えられると、se-env は実行を止めて知らせます。
-- どのツールとも組み合わせられます。`exec` は秘密情報を環境変数として渡し、`header` は HTTP ヘッダーを JSON で出力します。特定のツール向けの連携機能はありません。AI のコーディング支援ツールを含め、ほかのツールとの組み合わせ方は[使用例](#ほかのツールとの組み合わせ例)で紹介しています。
+- どのツールとも組み合わせられます。`exec` は秘密情報を環境変数として渡し、`header` は HTTP ヘッダーを JSON で出力します。AI のコーディング支援ツールを含め、ほかのツールとの組み合わせ方は[使用例](#ほかのツールとの組み合わせ例)で紹介しています。
 - 英語と日本語に対応しています。`SE_ENV_LANG`・`LC_ALL`・`LC_MESSAGES`・`LANG` から言語を選びます。
 - オフラインで動く小さな構成です。[age](https://github.com/FiloSottile/age) をライブラリとして組み込んだ Go のバイナリ1つと、Secure Enclave 用の [age-plugin-se](https://github.com/remko/age-plugin-se) だけで動きます。実行時に通信しません。
 
@@ -33,13 +33,13 @@ se-env exec work -- gh repo list          # Touch ID 1回。値は gh にだけ�
 
 ### Windows
 
-Windows 10 / 11 でも、同じコマンドで使えます。鍵は TPM で守られた **Windows Hello** の鍵で、復号のたびに Windows Hello（顔・指紋・PIN）を求めます。TPM 2.0 と、Windows Hello を設定したユーザーが必要です。ビルドとインストールは [docs/build_win.ja.md](docs/build_win.ja.md)、設計と macOS 版との違いは [docs/design-windows-hello.ja.md](docs/design-windows-hello.ja.md) を参照してください。主な違いは次のとおりです。
+Windows 10 / 11 でも、同じコマンドで使えます。鍵は TPM で守られた **Windows Hello** の鍵で、復号のたびに Windows Hello（顔・指紋・PIN）を求めます。TPM 2.0 と、Windows Hello を設定したユーザーが必要です。ビルドとインストールは [docs/build_win.ja.md](docs/build_win.ja.md)、仕組みは [docs/encryption.ja.md の10章](docs/encryption.ja.md#10-windows-での仕組み) を参照してください。主な違いは次のとおりです。
 
 - 鍵は CNG の Windows Hello 用プロバイダーに作った RSA 鍵です。復号はその中で行うので、秘密鍵は se-env のメモリに出ません。
-- 同じユーザーのほかのプログラムから守るため、se-env のプロセスとスレッドを開けないようにし、DLL の注入を防ぎ、ASLR を強制し、セッションのキャッシュをメモリ上で暗号化します。攻撃を難しくするための備えで、同じユーザーのマルウェアに対する境界にはなりません。セッションも同じです（設計メモの7章と12章）。
+- 同じユーザーのほかのプログラムから守るため、se-env のプロセスとスレッドを開けないようにし、DLL の注入を防ぎ、ASLR を強制し、セッションのキャッシュをメモリ上で暗号化します。攻撃を難しくするための備えで、同じユーザーのマルウェアに対する境界にはなりません。セッションも同じです。
 - Windows Hello の確認は、PC の前でログオンしているデスクトップにしか出ません。SSH やリモートデスクトップの中からは、鍵の作成も復号もできません。
-- セッションのメンバーは、親子関係ではなく Job Object で判定します。
-- macOS と Windows で同じ保管庫は使いません。それぞれの方式で別々に保管します。
+- セッションのメンバーは Job Object で判定します。
+- 保管庫は macOS と Windows で別々です。
 
 ## インストール
 
@@ -50,7 +50,7 @@ git clone https://github.com/koukichi-net/se-vault.git
 cd se-vault
 ```
 
-ビルド用のスクリプトはありません。[docs/build_mac.ja.md](docs/build_mac.ja.md) にある数個のコマンドで2つのプログラムをビルドします。se-env はすべての Go モジュールを `go.sum` と照合してから `go build` で、age-plugin-se は決められたコミットを確かめてから `swiftc` でビルドします。そのあと、次のようにインストールします。
+[docs/build_mac.ja.md](docs/build_mac.ja.md) にある数個のコマンドで2つのプログラムをビルドします。se-env はすべての Go モジュールを `go.sum` と照合してから `go build` で、age-plugin-se は決められたコミットを確かめてから `swiftc` でビルドします。そのあと、次のようにインストールします。
 
 ```sh
 # 好きな場所（ホーム）に入れる。~/.local/share/se-env がおすすめです。
@@ -170,7 +170,7 @@ Claude Code のようなツールが起動する se-env（MCP サーバーの `h
 
 ## ほかのツールとの組み合わせ例
 
-se-env 自体には、AI ツールを含め、特定のツールとの連携機能はありません。用意しているのは `exec`・`header`・`session` という汎用の部品で、以下はそれらを組み合わせる例です。自分の設定に合わせてコピーして使ってください。se-env がインストールするものではありません。
+以下は `exec`・`header`・`session` を組み合わせる例です。自分の設定に合わせてコピーして使ってください。
 
 ### シェルのショートカット（`~/.zshrc`）
 

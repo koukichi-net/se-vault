@@ -1,6 +1,6 @@
 //! The parts of age-plugin-winhello that need no Windows API: the identity
 //! and recipient encodings and the `winhello` stanza. See
-//! docs/design-windows-hello.ja.md in the se-env repository.
+//! docs/encryption.md (chapter 10) in the se-env repository.
 //!
 //! The key is an RSA-2048 key in the user's Windows Hello container (CNG,
 //! "Microsoft Passport Key Storage Provider"). It never leaves the TPM-backed

@@ -2,7 +2,7 @@
 
 English | [日本語](build_win.ja.md)
 
-The macOS instructions are in [build_mac.md](build_mac.md). The design of the Windows version is described (in Japanese) in [design-windows-hello.ja.md](design-windows-hello.ja.md).
+The macOS instructions are in [build_mac.md](build_mac.md). How the Windows version works is described in [chapter 10 of encryption.md](encryption.md#10-how-it-works-on-windows).
 
 On Windows, se-env consists of four files:
 
@@ -15,7 +15,7 @@ On Windows, se-env consists of four files:
 
 The three Rust programs share the crates `win/sewin` (Windows API) and `win/winhello-core` (key derivation and formats; no Windows dependency).
 
-There is no build script. Run the commands below in PowerShell, one at a time, from the top directory of the repository.
+Run the commands below in PowerShell, one at a time, from the top directory of the repository.
 
 ## Requirements
 
@@ -43,7 +43,7 @@ cd ..
 
 - `--locked`: use only the crate versions and hashes in `Cargo.lock`, and never rewrite it
 - The C runtime is linked statically (`win/.cargo/config.toml`), so the files need no DLL besides Windows itself. This is required: once started, se-env lets the process load only DLLs signed by Microsoft
-- The same file makes the programs load the DLLs they import from System32 only (`/DEPENDENTLOADFLAG:0x800`) and turns Control Flow Guard on. Without the first, Windows looks for `ncrypt.dll`, `tbs.dll` and the like in the program's own directory first. After a build, `dumpbin /loadconfig` shows `0800` as the `Dependent Load Flag`
+- The same file makes the programs load the DLLs they import from System32 only (`/DEPENDENTLOADFLAG:0x800`) and turns Control Flow Guard on. After a build, `dumpbin /loadconfig` shows `0800` as the `Dependent Load Flag`
 - `cargo test` also checks that the process hardening (ASLR and the other mitigation policies) really takes effect
 - The `winhello-core` tests also run on macOS and Linux (`cargo test -p winhello-core`)
 
@@ -81,12 +81,6 @@ se-env init       # create the Windows Hello key (once; Windows Hello asks twice
 - The home is always the directory above `se-env.exe`. Under `%LOCALAPPDATA%` its ACL already allows only you, SYSTEM and Administrators.
 - se-env checks that the home, `bin`, the four files, `identity.txt`, `vault` and `run` are owned by you (or SYSTEM, Administrators) and that nobody else may write to them, and stops otherwise. `init` gives `vault` an ACL that does not inherit.
 - Keep `se_env_win.dll` in the same directory as `se-env.exe`; se-env looks nowhere else.
-
-## Where it works
-
-- Windows Hello prompts appear only on the desktop of the user logged on at the PC itself. From inside SSH or Remote Desktop, no key can be created (`init`, `rekey`) and nothing can be decrypted. In Remote Desktop it fails with `0x80090010` (access denied).
-- Programs started in `se-env session` cannot leave the session's job object. A program that starts children with `CREATE_BREAKAWAY_FROM_JOB` fails to start them inside a session (Git for Windows' `sh`, PowerShell, cmd, Node.js and Claude Code are known to work).
-- Programs that Windows starts on its own are not in the session. A new Windows Terminal window opened from inside a session runs its shells outside it. With Windows Terminal, start `se-env session` inside a tab.
 
 ## Updating
 

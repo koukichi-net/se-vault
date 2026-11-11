@@ -144,7 +144,7 @@ sequenceDiagram
 | `vault/.<profile>.lock` | Empty lock file, so two commands cannot change one profile at the same time. | No |
 | `run/<id>.sock` | Unix socket of a running session (see §6). | No. Nothing secret is on disk |
 
-There is no separate public-key file. The public key (`age1se1…`) is derived from `identity.txt` every time se-env encrypts, by asking age-plugin-se; this needs no Touch ID. A `recipient.txt` left by se-env 0.4 or earlier is ignored and can be deleted.
+The public key (`age1se1…`) is derived from `identity.txt` every time se-env encrypts, by asking age-plugin-se; this needs no Touch ID.
 
 se-env accepts nothing else in `identity.txt`: one line, and it must be a Secure Enclave key. A plain software key or a key of another plugin is refused, so a replaced file cannot quietly remove the Touch ID requirement.
 
@@ -214,8 +214,6 @@ The copy is still watched, because a change to it means that something other tha
 - The alert is a separate process that stays on screen after se-env has exited, because se-env is often run by a program that never shows its standard error. While it is on screen it holds a lock for the profile, so repeated failures do not stack up alerts.
 - `se-env ls --verify <profile>` is the way out. It always decrypts with the Secure Enclave key, never from a session, prints each difference (what the copy said, and what the encrypted profile holds), and rebuilds the copy and the key-name index.
 
-A profile without public values is byte for byte what se-env 0.5 wrote. A profile with one cannot be read by 0.5, which reports a corrupt profile.
-
 ### Key names
 
 A profile is handed to commands as environment variables, so a key name must be a valid variable name. Names that change how a program is loaded or started are refused: `PATH`, `HOME`, `SHELL`, `IFS`, `ENV`, `BASH_ENV`, `ZDOTDIR`, `NODE_OPTIONS`, `PYTHONPATH`, `PYTHONSTARTUP`, `PERL5OPT`, `RUBYOPT`, `GIT_SSH_COMMAND`, `AGEDEBUG`, and everything starting with `DYLD_`, `LD_` or `SE_ENV_`. The same check runs when a profile is read: a profile that contains such a name, a malformed name, a duplicate name, or a value with a NUL byte is not handed to any command. `se-env rm <profile> <KEY>` can still remove the offending key. The list is a safety net, not a complete catalogue of dangerous variables.
@@ -272,7 +270,7 @@ Authenticate only if you expected this request.
 
 The `se-env session` process stays alive while `<command>` runs and acts as an **agent**, in the same way as ssh-agent:
 
-1. Decrypted profiles are kept **only in the agent's memory**. Nothing is written to disk, and there is no session key. `SE_ENV_SESSION` holds only the session ID (8 random bytes), which tells se-env which socket to use. It is not a secret.
+1. Decrypted profiles are kept **only in the agent's memory**. Nothing is written to disk. `SE_ENV_SESSION` holds only the session ID (8 random bytes), which tells se-env which socket to use. It is not a secret.
 2. The agent listens on a Unix socket, `run/<id>.sock` (mode 0600, in a 0700 directory). macOS limits socket paths to 104 bytes, so the home must be at most 77 characters long; otherwise se-env refuses to start a session. For every connection it asks the kernel who connected (`LOCAL_PEERCRED`, `LOCAL_PEERPID`) and looks the process up in the kernel's process table. It hands out or accepts profiles only if the peer
    - runs as the same user, and
    - is `<command>` or a descendant of it (the chain of parent processes leads to `<command>`), and
@@ -347,11 +345,11 @@ These checks stop se-env itself from being used to delete secrets unattended (fo
 
 ## 9. Build integrity
 
-se-env ships no build script. [build_mac.md](build_mac.md) lists the few commands to run by hand: `go mod verify` checks every Go module (the age library included) against the hashes pinned in `go.sum`, and se-env is built with `GOTOOLCHAIN=local` (so no toolchain is downloaded) and `GOFLAGS=-mod=readonly`. age-plugin-se is cloned into a new, empty directory at a pinned commit; the commit hash **and the absence of any other file in the checkout** are verified, `patches/age-plugin-se-reason.patch` is applied and checked to change only `Sources/Crypto.swift`, and it is compiled directly with `swiftc`, which needs no package manager. The se-env binary and the plugin are the only code involved.
+[build_mac.md](build_mac.md) lists the few commands to run by hand: `go mod verify` checks every Go module (the age library included) against the hashes pinned in `go.sum`, and se-env is built with `GOTOOLCHAIN=local` (so no toolchain is downloaded) and `GOFLAGS=-mod=readonly`. age-plugin-se is cloned into a new, empty directory at a pinned commit; the commit hash **and the absence of any other file in the checkout** are verified, `patches/age-plugin-se-reason.patch` is applied and checked to change only `Sources/Crypto.swift`, and it is compiled with `swiftc`. The se-env binary and the plugin are the only code involved.
 
 ## 10. How it works on Windows
 
-On Windows, se-env takes the same commands and uses the same profile format (the line format of chapter 4 and the age file). What differs is where the key lives, how the user is asked, how session members are recognised, and what is done about other programs running as the same user. This chapter describes how each of these is protected on Windows. The design history and the record of tests on a real machine are in [design-windows-hello.ja.md](design-windows-hello.ja.md) (Japanese; V1 to V19 below refer to its chapter 10).
+On Windows, se-env takes the same commands and uses the same profile format (the line format of chapter 4 and the age file). What differs is where the key lives, how the user is asked, how session members are recognised, and what is done about other programs running as the same user. This chapter describes how each of these is protected on Windows. "Tested on a real machine" means Windows 11 (Build 26300, AMD fTPM).
 
 ### 10.1 Components
 
@@ -393,7 +391,7 @@ flowchart TB
 | Setting | Value | Meaning |
 |---|---|---|
 | `Key Usage` | decrypt only | it cannot sign |
-| `NgcCacheType` | 1 (authentication mandatory) | every use asks for Hello. The setting belongs to the key; a caller cannot turn it off (V14) |
+| `NgcCacheType` | 1 (authentication mandatory) | every use asks for Hello. The setting belongs to the key; a caller cannot turn it off |
 | `Export Policy` | 0 | the private key cannot be exported |
 
 - Before creating the key, the plugin checks that the PC has a TPM 2.0. After creating it and before every use, it checks that the key is kept in hardware (the hardware flag of `NgcKeyImplType`) and refuses a software key.
@@ -402,7 +400,7 @@ flowchart TB
 
 ### 10.3 Encryption and decryption
 
-This provider decrypts with PKCS#1 v1.5 padding only (it refuses OAEP). So RSA never wraps the file key directly: RSA carries only a random seed, and the file key is sealed with authenticated encryption under a key derived from the seed.
+RSA carries only a random seed, and the file key is sealed with authenticated encryption under a key derived from the seed, because this provider decrypts with PKCS#1 v1.5 padding only.
 
 ```
 pub     = the public part of the key (BCRYPT_RSAPUBLIC_BLOB)
@@ -437,12 +435,12 @@ As on macOS, se-env puts "who asks, for what, to do what" into `SE_ENV_AUTH_REAS
 
 - The plugin uses the text only when its parent is the `se-env.exe` in the plugin's own directory. It compares the real path of the executable and checks that the parent started before the plugin. Otherwise it says the request did not come from se-env.
 - Besides the text, Windows shows the name of the requesting app. For a request from se-env that is `age-plugin-winhello`.
-- Other programs of the same user can also ask this key to decrypt and show any text they like (V14 showed a fake "se-env: get work/TOKEN" verbatim). They cannot skip the prompt itself. Do not trust the text of the dialog alone: judge by whether you just did that.
-- Face recognition may approve the moment the dialog appears (it happened during the V14 tests). If you want to read a request before you refuse it, use a PIN or a fingerprint.
+- Other programs of the same user can also ask this key to decrypt and show any text they like (a fake "se-env: get work/TOKEN" was shown verbatim on a real machine). They cannot skip the prompt itself. Do not trust the text of the dialog alone: judge by whether you just did that.
+- Face recognition may approve the moment the dialog appears. If you want to read a request before you refuse it, use a PIN or a fingerprint.
 
 ### 10.5 Files and permissions
 
-Windows has no `umask`, so se-env checks ACLs instead.
+Permissions are checked through ACLs.
 
 - Before it handles a secret, se-env looks at the home, `bin`, `se-env.exe`, the plugin, `se-env-ui.exe`, `se_env_win.dll`, `identity.txt`, `vault` and `run`. Each must be owned by you, SYSTEM, Administrators or TrustedInstaller, and nobody else may write to it; otherwise se-env stops.
 - `init` gives `vault`, and starting a session gives `run`, a protected ACL (you, SYSTEM and Administrators only).
@@ -456,17 +454,17 @@ When a Windows program starts another, Windows may look in the current directory
 | What is started | What se-env does |
 |---|---|
 | The plugin | As on macOS, `PATH` is narrowed to the plugin's directory. In addition, `NoDefaultCurrentDirectoryInExePath` is set so the current directory is not searched, and `GODEBUG` is removed from se-env's own environment (so that `execerrdot=0` and the like cannot switch off Go's safety checks). Commands started by `exec` and `session` get both as the caller had them |
-| DLLs the programs import | The three Rust programs and the DLL load their imported DLLs from System32 only (`/DEPENDENTLOADFLAG:0x800`). Without it, `ncrypt.dll`, `tbs.dll` and others are looked for in the program's directory first (V18) |
+| DLLs the programs import | The three Rust programs and the DLL load their imported DLLs from System32 only (`/DEPENDENTLOADFLAG:0x800`). `ncrypt.dll`, `tbs.dll` and others are never loaded from the program's directory |
 | Commands of `exec` and `session` | Never looked for in the current directory or in relative `PATH` entries |
 | Dialogs | Only the `se-env-ui.exe` next to `se-env.exe` |
 
 Besides the names of chapter 4, key names that change how programs start on Windows are refused: `PATHEXT`, `COMSPEC`, `PSModulePath`, `SystemRoot`, `windir`, `TEMP`, `TMP`, `HOMEDRIVE`, `HOMEPATH`, `ProgramFiles`, `__COMPAT_LAYER`, `PSExecutionPolicyPreference`, `NoDefaultCurrentDirectoryInExePath`, the .NET profiler and startup hook variables, and more. Windows variable names are case-insensitive, and so is the comparison.
 
-Windows has no `exec`. `se-env exec` starts the command as a child process, waits for it and returns its exit code. The values stay in se-env's memory until the command ends, under the protection of the next section.
+On Windows, `se-env exec` starts the command as a child process, waits for it and returns its exit code. The values stay in se-env's memory until the command ends, under the protection of the next section.
 
 ### 10.7 Against other programs of the same user
 
-macOS does not, by default, let a process read the memory of another process of the same user. Windows does: an unelevated program can open a process of the same user, read its memory, duplicate its handles and hijack its threads. So se-env (every command), the plugin and `se-env-ui.exe` protect themselves right after they start:
+On Windows, an unelevated program can open a process of the same user, read its memory, duplicate its handles and hijack its threads. So se-env (every command), the plugin and `se-env-ui.exe` protect themselves right after they start:
 
 | Protection | What it does |
 |---|---|
@@ -478,34 +476,31 @@ macOS does not, by default, let a process read the memory of another process of 
 | Dumps | Windows Error Reporting dumps leave out the heap |
 | If hardening fails | se-env runs no command that touches the vault, the plugin exits without doing anything, and `se-env-ui.exe` does not take a value |
 
-On a real machine, unelevated processes of the same user that came after se-env had started were refused reading memory, duplicating handles, creating threads and taking over threads (V9).
+On a real machine, unelevated processes of the same user that came after se-env had started were refused reading memory, duplicating handles, creating threads and taking over threads.
 
 This makes attacks harder; **it is not a boundary against malware running as the same user**. The tests showed:
 
-- For about 0.1 seconds after a process starts, until the protection is in place (V15), other processes can open it with full access. A handle opened then stays usable afterwards.
-- The program that started se-env (a shell, for example) and the console host (`conhost.exe`) hold full-access handles to se-env (V16). Both are unprotected processes of the same user; whatever gets into them can read se-env's memory.
-- Child processes started by `exec` and `session` are ordinary processes (V17). Programs of the same user can read their memory and environment.
-
-Preventing this for real would need the secret-handling work to move into a separate process that is protected from the moment it is created. The current se-env does not go that far.
+- For about 0.1 seconds after a process starts, until the protection is in place, other processes can open it with full access. A handle opened then stays usable afterwards.
+- The program that started se-env (a shell, for example) and the console host (`conhost.exe`) hold full-access handles to se-env. Both are unprotected processes of the same user; whatever gets into them can read se-env's memory.
+- Child processes started by `exec` and `session` are ordinary processes. Programs of the same user can read their memory and environment.
 
 ### 10.8 Sessions
 
 How the cache is kept, the TTL, `--only`, `lock`, `cache rm` and the SHA-256 check of the ciphertext are the same code as in chapter 6. What differs is how members are recognised.
 
-- On Windows a process can be started with a forged parent. When a parent exits, its children keep its "parent PID", and that PID can be reused by another process. So walking up the parents, as on macOS, does not work.
-- A **job object** is used instead. The agent creates an unnamed job, puts itself in it, and then starts the session's command. Processes started by a process in the job are in the job too. The job does not allow breakaway, so descendants cannot leave it.
+- Members are recognised by a **job object**. The agent creates an unnamed job, puts itself in it, and then starts the session's command. Processes started by a process in the job are in the job too. The job does not allow breakaway, so descendants cannot leave it.
 - The agent gets the PID of the connecting process from the socket (`SIO_AF_UNIX_GETPEERPID`) and checks that it runs as the same user (the user SID of its token) and that it is in the job (`IsProcessInJob`). A reused PID does not matter: only descendants of the session are in the job.
 - As on macOS, the channel is an AF_UNIX socket (`run\<id>.sock`), and `run` has a protected ACL. se-env in turn uses a socket only when the listening process runs as the same user and is its own ancestor. While walking up the parents, a parent that started after its child is taken for a reused PID and the walk stops.
 
-Git for Windows' `sh`, cmd, PowerShell, Node.js and Claude Code work inside a session as they are (V11). Programs that Windows starts on its own are not in the job: a new Windows Terminal window opened from inside a session runs its shells outside it. With Windows Terminal, start `se-env session` inside a tab.
+Git for Windows' `sh`, cmd, PowerShell, Node.js and Claude Code work inside a session as they are. A program that starts children with `CREATE_BREAKAWAY_FROM_JOB` fails to start them inside a session. Programs that Windows starts on its own are not in the job: a new Windows Terminal window opened from inside a session runs its shells outside it. With Windows Terminal, start `se-env session` inside a tab.
 
 Because the commands of a session are ordinary processes (10.7), a program of the same user that gets into one of them, or starts itself with one of them as its parent, is treated as a member and receives cached profiles without Hello. A Windows session is not a boundary against malware running as the same user. Keeping `--only` and `--ttl` narrow is what limits the damage.
 
 ### 10.9 Where it works, and what loses the key
 
-- Hello prompts appear only on the desktop of the user signed in at the PC itself. In SSH, only what needs no prompt works (`list`, `ls`, deriving the public key). In Remote Desktop, creating a key and decrypting both fail with `0x80090010` (access denied) (V13).
+- Hello prompts appear only on the desktop of the user signed in at the PC itself. In SSH, only what needs no prompt works (`list`, `ls`, deriving the public key). In Remote Desktop, creating a key and decrypting both fail with `0x80090010` (access denied).
 - **Changing** the Hello PIN keeps the key.
-- **Removing** the Hello PIN deletes the key, and setting a PIN again does not bring it back. **Clearing** the TPM leaves only the key's name; the key can no longer be used (V12). Either way the vault can never be decrypted again. When decryption fails, se-env asks the plugin about the key without a prompt and says so if the key is gone. Make sure your secrets can be issued again by whoever issued them.
+- **Removing** the Hello PIN deletes the key, and setting a PIN again does not bring it back. **Clearing** the TPM leaves only the key's name; the key can no longer be used. Either way the vault can never be decrypted again. When decryption fails, se-env asks the plugin about the key without a prompt and says so if the key is gone. Make sure your secrets can be issued again by whoever issued them.
 
 ### 10.10 What changes in the threat model
 
@@ -514,7 +509,7 @@ Only the differences from chapter 8.
 #### Protected
 
 - The private key never leaves the Hello container and never appears in the memory of se-env or the plugin. Even a program of the same user that can read all of se-env's files and memory does not get the key; it gets only the file keys and values being handled at that moment.
-- The key cannot be used silently either. Every use asks for Hello. The prompt is enforced by the key's settings, and programs other than se-env cannot skip it (V14).
+- The key cannot be used silently either. Every use asks for Hello. The prompt is enforced by the key's settings, and programs other than se-env cannot skip it.
 
 #### Not protected, or limits
 

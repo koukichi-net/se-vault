@@ -19,7 +19,7 @@ se-env exec work -- gh repo list          # Touch ID once; the secret is passed 
 - Sessions (optional) keep selected profiles in memory for a limited time, so a burst of work needs Touch ID only once. Only programs started inside the session can use them.
 - Deleting always needs Touch ID, even inside a session.
 - Settings that are not secret (a URL, a user name) can be stored next to the secrets as public values. They are shown without Touch ID, and se-env stops and alerts you if their plaintext copy is changed behind its back.
-- It works with any tool: `exec` passes secrets as environment variables and `header` prints HTTP headers as JSON. se-env has no tool-specific integration; [examples](#using-se-env-with-other-tools-examples) show how to combine it with other tools, AI coding assistants included.
+- It works with any tool: `exec` passes secrets as environment variables and `header` prints HTTP headers as JSON. [Examples](#using-se-env-with-other-tools-examples) show how to combine it with other tools, AI coding assistants included.
 - Messages are in English or Japanese, selected from `SE_ENV_LANG` / `LC_ALL` / `LC_MESSAGES` / `LANG`.
 - It is offline and small: one Go binary that links the [age](https://github.com/FiloSottile/age) library, plus [age-plugin-se](https://github.com/remko/age-plugin-se) for the Secure Enclave. No network access at runtime.
 
@@ -33,13 +33,13 @@ How the encryption works is described in [docs/encryption.md](docs/encryption.md
 
 ### Windows
 
-se-env also runs on Windows 10 / 11 with the same commands. The key is a **Windows Hello** key protected by the TPM, and every decryption asks for Windows Hello (face, fingerprint or PIN). It needs TPM 2.0 and a user with Windows Hello set up. See [docs/build_win.md](docs/build_win.md) to build and install, and [docs/design-windows-hello.ja.md](docs/design-windows-hello.ja.md) (Japanese) for the design. The main differences:
+se-env also runs on Windows 10 / 11 with the same commands. The key is a **Windows Hello** key protected by the TPM, and every decryption asks for Windows Hello (face, fingerprint or PIN). It needs TPM 2.0 and a user with Windows Hello set up. See [docs/build_win.md](docs/build_win.md) to build and install, and [chapter 10 of docs/encryption.md](docs/encryption.md#10-how-it-works-on-windows) for how it works. The main differences:
 
 - The key is an RSA key in the CNG provider for Windows Hello. Decryption happens inside it, so the private key never appears in se-env's memory.
-- To keep other programs of the same user out, se-env makes its process and threads unopenable, blocks DLL injection, forces ASLR, and encrypts the session cache in memory. This makes an attack harder; it is not a boundary against malware running as the same user, and neither is a session (design notes, chapters 7 and 12).
+- To keep other programs of the same user out, se-env makes its process and threads unopenable, blocks DLL injection, forces ASLR, and encrypts the session cache in memory. This makes an attack harder; it is not a boundary against malware running as the same user, and neither is a session.
 - Windows Hello prompts appear only on the desktop of the user logged on at the PC itself: from inside SSH or Remote Desktop, no key can be created and nothing can be decrypted.
-- Session membership is decided by a job object instead of the parent chain.
-- macOS and Windows do not share a vault; each stores secrets its own way.
+- Session membership is decided by a job object.
+- macOS and Windows keep separate vaults.
 
 ## Installation
 
@@ -50,7 +50,7 @@ git clone https://github.com/koukichi-net/se-vault.git
 cd se-vault
 ```
 
-There is no build script. Build the two programs with the handful of commands in [docs/build_mac.md](docs/build_mac.md) (se-env with `go build` after verifying every Go module against `go.sum`; age-plugin-se from a pinned, verified commit with `swiftc`), then install them:
+Build the two programs with the handful of commands in [docs/build_mac.md](docs/build_mac.md) (se-env with `go build` after verifying every Go module against `go.sum`; age-plugin-se from a pinned, verified commit with `swiftc`), then install them:
 
 ```sh
 # Install to a directory of your choice (the "home"). ~/.local/share/se-env is a good default:
@@ -170,7 +170,7 @@ Translations live in [`cmd/se-env/locales/`](cmd/se-env/locales) as [go-i18n](ht
 
 ## Using se-env with other tools (examples)
 
-se-env itself has no integration with any particular tool, AI assistants included. It offers generic building blocks — `exec`, `header` and `session` — and the snippets below show how to combine them. Copy and adapt them to your own configuration; they are not installed by se-env.
+The snippets below combine `exec`, `header` and `session`. Copy and adapt them to your own configuration.
 
 ### Shell shortcuts (`~/.zshrc`)
 

@@ -11,7 +11,7 @@ se-env は2つのプログラムでできています。
 | `se-env` | Go | このリポジトリ（`cmd/se-env`） | 本体。[age](https://github.com/FiloSottile/age) のライブラリと、`go.mod` に書かれたほかの Go モジュールを組み込んでいる |
 | `age-plugin-se` | Swift | [remko/age-plugin-se](https://github.com/remko/age-plugin-se) | Secure Enclave の鍵を扱う。se-env が age のプラグインの仕組みで起動する |
 
-ビルド用のスクリプトはありません。実行するコマンドは下の数個だけなので、1つずつ読んでから実行できます。リポジトリの一番上のディレクトリで実行してください。git、Go 1.26 以降、Swift 6.2 以降（Xcode または Command Line Tools）が必要です。`age` や `age-keygen` のプログラムは**必要ありません**。
+実行するコマンドは下の数個だけなので、1つずつ読んでから実行できます。リポジトリの一番上のディレクトリで実行してください。git、Go 1.26 以降、Swift 6.2 以降（Xcode または Command Line Tools）が必要です。
 
 ## 1. se-env をビルドする
 
@@ -53,7 +53,7 @@ rm -rf "$SRC"
 
 パッチは、se-env が環境変数 `SE_ENV_AUTH_REASON` で渡す文を、Touch ID のダイアログに出すようにします（`LAContext.localizedReason`）。プラグインの親プロセスが、プラグインと同じディレクトリにある `se-env` のときだけ使います。ほかのプログラムがプラグインを直接起動しても、ダイアログの文は差し替えられません。それ以外の動作は変えません。内容は `patches/age-plugin-se-reason.patch` で確かめられます。
 
-プラグインは SwiftPM ではなく `swiftc` で直接ビルドします。SwiftPM だと、Linux と Windows でしか使わない `swift-crypto` まで取得してしまうためです。macOS では Apple のフレームワーク（CryptoKit と LocalAuthentication）にしか依存しません。`'21.0' is not a valid version number for macOS` のような警告は上流のコードによるもので、任意の耐量子鍵（`--pq`）にしか関係しません。ここでは無視して構いません。
+プラグインは `swiftc` でビルドし、Apple のフレームワーク（CryptoKit と LocalAuthentication）にだけ依存します。`'21.0' is not a valid version number for macOS` のような警告は上流のコードによるもので、任意の耐量子鍵（`--pq`）にしか関係しません。ここでは無視して構いません。
 
 ### 別の方法：プラグインをパッケージマネージャで入れる
 

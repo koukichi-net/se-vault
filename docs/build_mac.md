@@ -11,7 +11,7 @@ se-env consists of two programs:
 | `se-env` | Go | this repository (`cmd/se-env`) | the tool. It links the [age](https://github.com/FiloSottile/age) library and the other Go modules listed in `go.mod` |
 | `age-plugin-se` | Swift | [remko/age-plugin-se](https://github.com/remko/age-plugin-se) | the Secure Enclave key. se-env runs it through age's plugin protocol |
 
-There is no build script: the commands below are few, and you can read each one before running it. Run them from the repository root. Requirements: git, Go 1.26 or later, Swift 6.2 or later (Xcode or the Command Line Tools). The separate `age` and `age-keygen` programs are **not** needed.
+The commands below are few, and you can read each one before running it. Run them from the repository root. Requirements: git, Go 1.26 or later, Swift 6.2 or later (Xcode or the Command Line Tools).
 
 ## 1. Build se-env
 
@@ -53,7 +53,7 @@ rm -rf "$SRC"
 
 The patch makes the plugin show the text se-env passes in the environment variable `SE_ENV_AUTH_REASON` in the Touch ID dialog (`LAContext.localizedReason`). The text is used only when the plugin's parent process is the `se-env` in the same directory as the plugin, so another program that starts the plugin itself cannot change the dialog. Nothing else changes; read `patches/age-plugin-se-reason.patch` to check.
 
-The plugin is compiled with plain `swiftc`, not SwiftPM. SwiftPM would also fetch `swift-crypto`, which is used only on Linux and Windows. On macOS the plugin depends only on Apple frameworks (CryptoKit, LocalAuthentication). Warnings such as `'21.0' is not a valid version number for macOS` come from upstream code and affect only the optional post-quantum keys (`--pq`). They are harmless here.
+The plugin is compiled with `swiftc` and depends only on Apple frameworks (CryptoKit, LocalAuthentication). Warnings such as `'21.0' is not a valid version number for macOS` come from upstream code and affect only the optional post-quantum keys (`--pq`). They are harmless here.
 
 ### Alternative: the plugin from a package manager
 
