@@ -6,7 +6,7 @@
 //!   age-plugin-winhello --age-plugin=…     the age plugin protocol (run by age / se-env)
 //!
 //! The key derivation and formats are in winhello-core; the design is in
-//! docs/encryption.md, chapter 10.
+//! docs/windows.md.
 
 #[cfg(windows)]
 mod plugin;

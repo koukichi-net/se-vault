@@ -13,7 +13,7 @@ import (
 // rekey makes a new key and encrypts every profile to it again; then the old
 // key is deleted (on Windows the Hello key too). It is for when the key
 // should be replaced, after a change to the Windows Hello setup for example
-// (docs/encryption.md, chapter 10).
+// (docs/windows.md).
 //
 // Order, so that an interruption never loses a profile:
 //  1. the new key is written to identity.new.txt

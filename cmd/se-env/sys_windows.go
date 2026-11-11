@@ -3,7 +3,7 @@ package main
 // Windows: Windows Hello through age-plugin-winhello, ACLs, LockFileEx,
 // AF_UNIX peer pids and a job object for sessions, dialogs from se-env-ui.
 // The Windows API calls themselves are in se_env_win.dll (win_windows.go).
-// See docs/encryption.md, chapter 10.
+// See docs/windows.md.
 
 import (
 	"encoding/binary"

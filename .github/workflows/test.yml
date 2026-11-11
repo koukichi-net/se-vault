@@ -19,7 +19,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 15
     env:
-      # Same settings as docs/build.md: no toolchain download, no go.mod edits.
+      # Same settings as docs/macos.md: no toolchain download, no go.mod edits.
       GOTOOLCHAIN: local
       GOFLAGS: -mod=readonly
     steps:

@@ -16,7 +16,7 @@ run/
 *.pem
 *.key
 
-# ===== build outputs (see docs/build_mac.md, docs/build_win.md) =====
+# ===== build outputs (see docs/macos.md, docs/windows.md) =====
 bin/
 .build/
 /src/
