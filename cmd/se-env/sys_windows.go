@@ -8,7 +8,6 @@ package main
 import (
 	"encoding/binary"
 	"errors"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -211,17 +210,10 @@ func systemLang() string {
 	return "en"
 }
 
-func peerOf(c *net.UnixConn) (sameUser bool, pid int, err error) {
-	raw, err := c.SyscallConn()
-	if err != nil {
-		return false, 0, err
-	}
-	var cerr error
-	err = raw.Control(func(fd uintptr) { pid, cerr = winPeerPid(fd) })
-	if err == nil {
-		err = cerr
-	}
-	if err != nil {
+// sockPeer asks the socket for the pid at the other end, then whether that
+// process runs as this user.
+func sockPeer(fd uintptr) (sameUser bool, pid int, err error) {
+	if pid, err = winPeerPid(fd); err != nil {
 		return false, 0, err
 	}
 	return winSameUser(pid), pid, nil
@@ -363,6 +355,7 @@ var platformLocales = []string{"locales/windows"}
 // in every message on Windows. Longer names come first.
 var platformWords = strings.NewReplacer(
 	"age-plugin-se", "age-plugin-winhello",
+	"AGE-PLUGIN-SE-", "AGE-PLUGIN-WINHELLO-",
 	"Touch ID (or your password)", "Windows Hello (face, fingerprint or PIN)",
 	"Touch ID（またはパスワード）", "Windows Hello（顔・指紋・PIN）",
 	"Touch ID / password", "Windows Hello",

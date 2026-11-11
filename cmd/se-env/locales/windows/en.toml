@@ -143,6 +143,5 @@ destroy_scope = '''  deletes: identity.txt, vault/ (all profiles), run/ (session
   decrypted any more.
   Reissue the API keys at each service if you still need them.'''
 
-err_bad_identity = "{{.Path}} must hold exactly one Windows Hello key (AGE-PLUGIN-WINHELLO-1...) of this PC"
 err_unsafe_key = "key name {{.Name}} is refused: it changes how programs start (PATH, PATHEXT, COMSPEC, TEMP, SE_ENV_*, NODE_OPTIONS, ...; case is ignored)"
 err_key_unusable = "the Windows Hello key in {{.Path}} can no longer be used: {{.Detail}}. Removing the Windows Hello PIN or clearing the TPM destroys the key; profiles encrypted to it cannot be decrypted again"

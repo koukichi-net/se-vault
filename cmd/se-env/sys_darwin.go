@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -124,26 +123,14 @@ func runCommand(path string, args, env []string) error {
 
 func systemLang() string { return "en" }
 
-// peerOf tells whether the process that connected runs as this user, and its pid.
-func peerOf(c *net.UnixConn) (sameUser bool, pid int, err error) {
-	raw, err := c.SyscallConn()
+// sockPeer asks the kernel for the user and pid at the other end of a socket.
+func sockPeer(fd uintptr) (sameUser bool, pid int, err error) {
+	cred, err := unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED)
 	if err != nil {
 		return false, 0, err
 	}
-	var cerr error
-	var uid uint32
-	err = raw.Control(func(fd uintptr) {
-		var cred *unix.Xucred
-		if cred, cerr = unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED); cerr != nil {
-			return
-		}
-		uid = cred.Uid
-		pid, cerr = unix.GetsockoptInt(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERPID)
-	})
-	if err == nil {
-		err = cerr
-	}
-	return err == nil && uid == uint32(os.Getuid()), pid, err
+	pid, err = unix.GetsockoptInt(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERPID)
+	return cred.Uid == uint32(os.Getuid()), pid, err
 }
 
 func procInfo(pid int) (ppid int, started time.Time, err error) {

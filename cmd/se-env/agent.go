@@ -272,6 +272,20 @@ func descendsFrom(pid, root int) bool {
 	return false
 }
 
+// peerOf tells whether the process that connected runs as this user, and its
+// pid. sockPeer (sys_*.go) reads them from the socket.
+func peerOf(c *net.UnixConn) (sameUser bool, pid int, err error) {
+	raw, err := c.SyscallConn()
+	if err != nil {
+		return false, 0, err
+	}
+	var cerr error
+	if err = raw.Control(func(fd uintptr) { sameUser, pid, cerr = sockPeer(fd) }); err == nil {
+		err = cerr
+	}
+	return err == nil && sameUser, pid, err
+}
+
 func (ag *agent) handle(c *net.UnixConn, accepted time.Time) {
 	defer c.Close()
 	same, pid, err := peerOf(c)

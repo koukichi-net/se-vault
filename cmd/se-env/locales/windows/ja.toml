@@ -147,6 +147,5 @@ destroy_scope = '''  削除されるもの: identity.txt, vault/（全プロフ�
     保管庫のバックアップからも復号できなくなります。
     使っていたAPIキーは、必要なら各サービスで再発行してください。'''
 
-err_bad_identity = "{{.Path}} には、このPCの Windows Hello の鍵（AGE-PLUGIN-WINHELLO-1...）を1行だけ置いてください"
 err_unsafe_key = "キー名 {{.Name}} は使えません。プログラムの起動のしかたを変える名前です（PATH, PATHEXT, COMSPEC, TEMP, SE_ENV_*, NODE_OPTIONS など。大文字と小文字の違いは区別しません）"
 err_key_unusable = "{{.Path}} の Windows Hello の鍵が使えなくなっています: {{.Detail}}。Windows Hello の PIN の削除や TPM のクリアで鍵は失われ、この鍵で暗号化したプロファイルは二度と復号できません"
