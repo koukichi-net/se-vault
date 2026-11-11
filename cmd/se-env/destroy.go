@@ -19,7 +19,7 @@ func (a *app) cmdDestroy(args []string) error {
 	if !isTTY(os.Stdin) || !isTTY(os.Stdout) || !isTTY(os.Stderr) {
 		return a.fail("err_destroy_tty")
 	}
-	if os.Getenv("KC_ENV_SESSION") != "" {
+	if os.Getenv("SE_ENV_SESSION") != "" {
 		return a.fail("err_destroy_session")
 	}
 	if a.home == "" || a.home == "/" || !exists(a.bin) || filepath.Dir(a.self) != a.bin {
@@ -108,7 +108,7 @@ func (a *app) cmdDestroy(args []string) error {
 	for _, si := range a.sessions() { // running sessions hold decrypted profiles in memory
 		a.endSession(si.ID)
 	}
-	legacyRecipient := filepath.Join(a.home, "recipient.txt") // written by kc-env 0.4 and earlier
+	legacyRecipient := filepath.Join(a.home, "recipient.txt") // written by se-env 0.4 and earlier
 	os.RemoveAll(a.vault)
 	os.RemoveAll(a.runDir)
 	os.Remove(a.identityPath)

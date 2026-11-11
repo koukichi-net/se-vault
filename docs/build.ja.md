@@ -2,29 +2,29 @@
 
 [English](build.md) | 日本語
 
-kc-env は2つのプログラムでできています。
+se-env は2つのプログラムでできています。
 
 | プログラム | 言語 | ソース | 役割 |
 |---|---|---|---|
-| `kc-env` | Go | このリポジトリ（`cmd/kc-env`） | 本体。[age](https://github.com/FiloSottile/age) のライブラリと、`go.mod` に書かれたほかの Go モジュールを組み込んでいる |
-| `age-plugin-se` | Swift | [remko/age-plugin-se](https://github.com/remko/age-plugin-se) | Secure Enclave の鍵を扱う。kc-env が age のプラグインの仕組みで起動する |
+| `se-env` | Go | このリポジトリ（`cmd/se-env`） | 本体。[age](https://github.com/FiloSottile/age) のライブラリと、`go.mod` に書かれたほかの Go モジュールを組み込んでいる |
+| `age-plugin-se` | Swift | [remko/age-plugin-se](https://github.com/remko/age-plugin-se) | Secure Enclave の鍵を扱う。se-env が age のプラグインの仕組みで起動する |
 
 ビルド用のスクリプトはありません。実行するコマンドは下の数個だけなので、1つずつ読んでから実行できます。リポジトリの一番上のディレクトリで実行してください。git、Go 1.26 以降、Swift 6.2 以降（Xcode または Command Line Tools）が必要です。`age` や `age-keygen` のプログラムは**必要ありません**。
 
-## 1. kc-env をビルドする
+## 1. se-env をビルドする
 
 ```sh
 export GOTOOLCHAIN=local GOFLAGS=-mod=readonly
 go mod download && go mod verify
 go vet ./... && go test ./...
 mkdir -p bin
-go build -trimpath -o bin/kc-env ./cmd/kc-env
+go build -trimpath -o bin/se-env ./cmd/se-env
 ```
 
 - `GOTOOLCHAIN=local`：別のバージョンの Go を自動でダウンロードしない
 - `GOFLAGS=-mod=readonly`：`go.mod` と `go.sum` を書き換えない
 - `go mod download` と `go mod verify`：age を含むすべてのモジュールを `go.sum` のハッシュと照合する
-- `go test`：単体テストと翻訳のチェック。Secure Enclave は要りません（テストはソフトウェアの鍵を使います。本体はこの鍵を受け付けません）。セッションを試すために、短時間だけ kc-env のプロセスをいくつか起動します
+- `go test`：単体テストと翻訳のチェック。Secure Enclave は要りません（テストはソフトウェアの鍵を使います。本体はこの鍵を受け付けません）。セッションを試すために、短時間だけ se-env のプロセスをいくつか起動します
 
 ## 2. age-plugin-se をビルドする
 
@@ -57,23 +57,23 @@ sudo port install age-plugin-se     # MacPorts
 nix profile install nixpkgs#age-plugin-se
 ```
 
-kc-env はプラグインを、まず `<ホーム>/bin` で探し、なければ `PATH` の絶対パスのディレクトリから探します。実際にどれが使われるかは `kc-env help` の「プラグイン」で確認できます。この方法では自分でビルドする代わりにパッケージのビルド工程を信頼することになります。また、上で固定しているバージョンとは違うものが入る場合があります。プラグインやそのディレクトリにグループや他人が書き込める場合、kc-env は動作を止めます。一部の Intel Mac の `/usr/local/bin` がこれに当たります。その場合は、プラグインを `<ホーム>/bin` にコピーしてください。
+se-env はプラグインを、まず `<ホーム>/bin` で探し、なければ `PATH` の絶対パスのディレクトリから探します。実際にどれが使われるかは `se-env help` の「プラグイン」で確認できます。この方法では自分でビルドする代わりにパッケージのビルド工程を信頼することになります。また、上で固定しているバージョンとは違うものが入る場合があります。プラグインやそのディレクトリにグループや他人が書き込める場合、se-env は動作を止めます。一部の Intel Mac の `/usr/local/bin` がこれに当たります。その場合は、プラグインを `<ホーム>/bin` にコピーしてください。
 
 ## 3. インストール
 
 ```sh
-HOME_DIR=~/.local/share/kc-env
+HOME_DIR=~/.local/share/se-env
 mkdir -p "$HOME_DIR/bin" ~/.local/bin
 chmod 700 "$HOME_DIR"
-cp -p  bin/kc-env "$HOME_DIR/bin/"
+cp -p  bin/se-env "$HOME_DIR/bin/"
 [ -x bin/age-plugin-se ] && cp -p bin/age-plugin-se "$HOME_DIR/bin/"   # PATH のものを使う場合は不要
 cp -Rp completions "$HOME_DIR/"
-ln -sf "$HOME_DIR/bin/kc-env" ~/.local/bin/kc-env    # ~/.local/bin を PATH に入れておく
-kc-env help        # 「ファイル」のパスを確認する
-kc-env init        # Secure Enclave の鍵を作る（初回のインストールのときだけ）
+ln -sf "$HOME_DIR/bin/se-env" ~/.local/bin/se-env    # ~/.local/bin を PATH に入れておく
+se-env help        # 「ファイル」のパスを確認する
+se-env init        # Secure Enclave の鍵を作る（初回のインストールのときだけ）
 ```
 
-ホームは常に本体の1つ上のディレクトリなので、ほかに設定するものはありません。ホームの中のものは、所有者が自分で、グループや他人が書き込めない状態にしてください。そうでなければ kc-env は動作を止めます。
+ホームは常に本体の1つ上のディレクトリなので、ほかに設定するものはありません。ホームの中のものは、所有者が自分で、グループや他人が書き込めない状態にしてください。そうでなければ se-env は動作を止めます。
 
 必要なら、README にある Tab 補完の設定や、シェルの使用例も追加してください。
 
@@ -82,4 +82,4 @@ kc-env init        # Secure Enclave の鍵を作る（初回のインストー�
 - Go モジュール：`go get <モジュール>@<バージョン>` と `go mod tidy` で `go.mod` と `go.sum` が更新されます。ビルドし直す前に、変更内容（特に `filippo.io/age`）を確かめてください。
 - age-plugin-se：上のコマンドのコミットハッシュを書き換えます。先に上流の変更内容を読んでください。特に、identity や宛先の形式に関する変更には注意が必要です。
 
-ビルドし直して置き換わるのはバイナリだけで、鍵や保管庫には影響しません。新しいバージョンを使い始める前に、既存のプロファイルを `kc-env get` で復号できることを確かめてください。
+ビルドし直して置き換わるのはバイナリだけで、鍵や保管庫には影響しません。新しいバージョンを使い始める前に、既存のプロファイルを `se-env get` で復号できることを確かめてください。

@@ -1,28 +1,28 @@
-#compdef kc-env
-# zsh completion for kc-env.
-# Profiles and key names come from `kc-env __complete`, which reads only file
+#compdef se-env
+# zsh completion for se-env.
+# Profiles and key names come from `se-env __complete`, which reads only file
 # names, the plaintext key index and the metadata of running sessions, so
 # completion never triggers Touch ID.
 # Descriptions come from the binary too (`__complete msgs`), so they follow
-# KC_ENV_LANG / LC_ALL / LC_MESSAGES / LANG like every other message.
+# SE_ENV_LANG / LC_ALL / LC_MESSAGES / LANG like every other message.
 
-_kc_env_profiles() {
+_se_env_profiles() {
   local -a profiles
-  profiles=(${(f)"$(_call_program profiles ${(q)_kc_env_bin} __complete profiles 2>/dev/null)"})
+  profiles=(${(f)"$(_call_program profiles ${(q)_se_env_bin} __complete profiles 2>/dev/null)"})
   _describe -t profiles "${_kc_m[comp_tag_profile]:-profile}" profiles
 }
 
-_kc_env_keys() { # profile [already-typed keys to leave out...]
+_se_env_keys() { # profile [already-typed keys to leave out...]
   [[ -n ${1:-} ]] || return 1
   local -a keys skip
-  keys=(${(f)"$(_call_program keys ${(q)_kc_env_bin} __complete keys ${(q)1} 2>/dev/null)"})
+  keys=(${(f)"$(_call_program keys ${(q)_se_env_bin} __complete keys ${(q)1} 2>/dev/null)"})
   skip=("${@[2,-1]}")
   keys=(${keys:|skip})
   _describe -t keys "${_kc_m[comp_tag_key]:-key} ($1)" keys
 }
 
 # Complete the command after `--` as if it were typed on its own.
-_kc_env_after_dashdash() {
+_se_env_after_dashdash() {
   local i=${words[(i)--]}
   (( i < CURRENT )) || return 1
   words=("${(@)words[i+1,-1]}")
@@ -35,12 +35,12 @@ _kc_env_after_dashdash() {
 }
 
 # Description for an _arguments "[...]" spec: brackets must be escaped.
-_kc_env_d() { REPLY=${${${_kc_m[$1]:-}//\[/\\[}//\]/\\]} }
+_se_env_d() { REPLY=${${${_kc_m[$1]:-}//\[/\\[}//\]/\\]} }
 
-_kc-env() {
-  local _kc_env_bin=${words[1]} line
+_se-env() {
+  local _se_env_bin=${words[1]} line
   local -A _kc_m
-  for line in ${(f)"$(_call_program msgs ${(q)_kc_env_bin} __complete msgs 2>/dev/null)"}; do
+  for line in ${(f)"$(_call_program msgs ${(q)_se_env_bin} __complete msgs 2>/dev/null)"}; do
     _kc_m[${line%%$'\t'*}]=${line#*$'\t'}
   done
 
@@ -50,7 +50,7 @@ _kc-env() {
   done
 
   if (( CURRENT == 2 )); then
-    _describe -t commands "${_kc_m[comp_tag_command]:-kc-env command}" subcmds
+    _describe -t commands "${_kc_m[comp_tag_command]:-se-env command}" subcmds
     return
   fi
 
@@ -60,59 +60,59 @@ _kc-env() {
   (( CURRENT-- ))
 
   local d_verify d_force d_all d_name d_prefix d_public
-  _kc_env_d comp_opt_verify; d_verify=$REPLY
-  _kc_env_d comp_opt_force;  d_force=$REPLY
-  _kc_env_d comp_opt_all;    d_all=$REPLY
-  _kc_env_d comp_opt_name;   d_name=$REPLY
-  _kc_env_d comp_opt_prefix; d_prefix=$REPLY
-  _kc_env_d comp_opt_public; d_public=$REPLY
+  _se_env_d comp_opt_verify; d_verify=$REPLY
+  _se_env_d comp_opt_force;  d_force=$REPLY
+  _se_env_d comp_opt_all;    d_all=$REPLY
+  _se_env_d comp_opt_name;   d_name=$REPLY
+  _se_env_d comp_opt_prefix; d_prefix=$REPLY
+  _se_env_d comp_opt_public; d_public=$REPLY
 
   case $cmd in
     list|tree)
-      _arguments '1:profile:_kc_env_profiles' ;;
+      _arguments '1:profile:_se_env_profiles' ;;
     rm-profile)
       _arguments \
         "--force[$d_force]" \
-        '1:profile:_kc_env_profiles' ;;
+        '1:profile:_se_env_profiles' ;;
     rm)
       _arguments \
         "--all[$d_all]" \
-        '1:profile:_kc_env_profiles' \
-        '*:key:{(( ${words[(I)--all]} )) || _kc_env_keys $line[1] ${words[3,CURRENT-1]}}' ;;
+        '1:profile:_se_env_profiles' \
+        '*:key:{(( ${words[(I)--all]} )) || _se_env_keys $line[1] ${words[3,CURRENT-1]}}' ;;
     ls)
       _arguments \
         "--verify[$d_verify]" \
-        '1:profile:_kc_env_profiles' ;;
+        '1:profile:_se_env_profiles' ;;
     set)
       _arguments \
         "--public[$d_public]" \
-        '1:profile:_kc_env_profiles' \
-        '2:key:{_kc_env_keys $line[1]}' \
+        '1:profile:_se_env_profiles' \
+        '2:key:{_se_env_keys $line[1]}' \
         '3: :' ;;   # a value: only with --public, nothing to offer
     get)
       _arguments \
-        '1:profile:_kc_env_profiles' \
-        '2:key:{_kc_env_keys $line[1]}' ;;
+        '1:profile:_se_env_profiles' \
+        '2:key:{_se_env_keys $line[1]}' ;;
     header)
       _arguments \
         "--name[$d_name]:header name:(Authorization X-API-Key X-Auth-Token)" \
         "--prefix[$d_prefix]:prefix:(\"Bearer \" \"Token \" \"\")" \
-        '1:profile:_kc_env_profiles' \
-        '2:key:{_kc_env_keys $line[1]}' ;;
+        '1:profile:_se_env_profiles' \
+        '2:key:{_se_env_keys $line[1]}' ;;
     exec)
-      _kc_env_after_dashdash && return
+      _se_env_after_dashdash && return
       if (( CURRENT == 2 )); then
-        _kc_env_profiles
+        _se_env_profiles
       else
         compadd -- --
       fi ;;
     session)
-      _kc_env_after_dashdash && return
+      _se_env_after_dashdash && return
       case ${words[CURRENT-1]} in
         --ttl)
           local -a ttls=("15m:${_kc_m[comp_ttl_15m]}" "30m:${_kc_m[comp_ttl_30m]}" "1h:${_kc_m[comp_ttl_1h]}" "2h:${_kc_m[comp_ttl_2h]}")
           _describe -t ttl 'ttl' ttls; return ;;
-        --only) _sequence -s , _kc_env_profiles; return ;;
+        --only) _sequence -s , _se_env_profiles; return ;;
       esac
       local -a opts
       (( CURRENT == 2 )) && opts+=("status:${_kc_m[comp_session_status]}")
@@ -126,7 +126,7 @@ _kc-env() {
         _describe -t cache-commands 'cache command' sub
       elif [[ ${words[2]} == rm ]]; then
         local -a ids picked
-        ids=(${(f)"$(_call_program sessions ${(q)_kc_env_bin} __complete sessions 2>/dev/null)"})
+        ids=(${(f)"$(_call_program sessions ${(q)_se_env_bin} __complete sessions 2>/dev/null)"})
         picked=(${words[3,CURRENT-1]})
         ids=(${ids:#(${(j:|:)~picked}):*})   # drop IDs already typed
         local -a flags=("--current:${_kc_m[comp_cache_current]}" "--all:${_kc_m[comp_cache_all]}")
@@ -135,4 +135,4 @@ _kc-env() {
   esac
 }
 
-_kc-env "$@"
+_se-env "$@"

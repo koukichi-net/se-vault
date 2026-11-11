@@ -1,4 +1,4 @@
-# ===== kc-env: never commit keys or secrets (patterns match at any depth) =====
+# ===== se-env: never commit keys or secrets (patterns match at any depth) =====
 # Secure Enclave key reference and its public key
 identity.txt
 identity*.txt

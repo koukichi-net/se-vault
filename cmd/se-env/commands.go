@@ -113,7 +113,7 @@ func (a *app) cmdLs(args []string) error {
 	case verify:
 		// Always the Secure Enclave key, never a session: this is how the
 		// user sees for themselves what the encrypted profile holds, and how
-		// a copy that was changed outside kc-env is put right.
+		// a copy that was changed outside se-env is put right.
 		if err := a.requireInit(); err != nil {
 			return err
 		}
@@ -137,13 +137,13 @@ func (a *app) cmdLs(args []string) error {
 				}
 				return showValue(v)
 			}
-			fmt.Fprintln(os.Stderr, "kc-env: "+a.t.S("verify_public_differs", "Name", p))
+			fmt.Fprintln(os.Stderr, "se-env: "+a.t.S("verify_public_differs", "Name", p))
 			for _, k := range diff {
 				wv, wok := was[k]
 				fmt.Fprintln(os.Stderr, "  "+a.t.S("verify_public_diff", "Key", k,
 					"Shown", side(wv, wok), "Real", side(l.kv[k], l.pub[k])))
 			}
-			fmt.Fprintln(os.Stderr, "kc-env: "+a.t.S("verify_public_repaired", "Name", p))
+			fmt.Fprintln(os.Stderr, "se-env: "+a.t.S("verify_public_repaired", "Name", p))
 		}
 		if err := a.writePublicCopy(p, publicCopyOf(l.kv, l.pub)); err != nil {
 			return err
@@ -521,7 +521,7 @@ func (a *app) cmdRmProfile(args []string) error {
 		return err
 	}
 	hasKeys := func(keys []string) error {
-		fmt.Fprintln(os.Stderr, "kc-env: "+a.t.N("err_rm_profile_has_keys", len(keys), "Name", p))
+		fmt.Fprintln(os.Stderr, "se-env: "+a.t.N("err_rm_profile_has_keys", len(keys), "Name", p))
 		for _, k := range keys {
 			fmt.Fprintln(os.Stderr, "  "+k)
 		}
@@ -679,12 +679,12 @@ loop:
 	if scope == "" {
 		scope = a.t.S("word_all")
 	}
-	fmt.Fprintln(os.Stderr, "kc-env: "+a.t.S("msg_session_started", "Expires", ag.exp.Format("15:04"), "Scope", scope))
+	fmt.Fprintln(os.Stderr, "se-env: "+a.t.S("msg_session_started", "Expires", ag.exp.Format("15:04"), "Scope", scope))
 
 	cmd := exec.Command(path, args[1:]...)
 	cmd.Args[0] = args[0]
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.Env = a.childEnv(map[string]string{"KC_ENV_SESSION": ag.id}) // an ID, not a secret
+	cmd.Env = a.childEnv(map[string]string{"SE_ENV_SESSION": ag.id}) // an ID, not a secret
 	// Ctrl-C / Ctrl-\ are meant for the child (it gets them from the terminal);
 	// TERM/HUP are forwarded. Handlers, unlike SIG_IGN, are not inherited by exec.
 	sigs := make(chan os.Signal, 4)
@@ -701,7 +701,7 @@ loop:
 		}
 	}()
 	if err := ag.serve(cmd.Process.Pid); err != nil {
-		fmt.Fprintln(os.Stderr, "kc-env:", err) // the command runs without a session
+		fmt.Fprintln(os.Stderr, "se-env:", err) // the command runs without a session
 	}
 	err = cmd.Wait()
 	var ee *exec.ExitError
@@ -717,13 +717,13 @@ loop:
 func (a *app) cmdLock() error {
 	s := a.activeSession()
 	if s == nil {
-		fmt.Fprintln(os.Stderr, "kc-env: "+a.t.S("msg_no_session"))
+		fmt.Fprintln(os.Stderr, "se-env: "+a.t.S("msg_no_session"))
 		return nil
 	}
 	if rs, err := ask(s.path, request{Op: "lock"}, true); err != nil || !rs.OK {
 		return a.fail("err_session_unreachable")
 	}
-	fmt.Fprintln(os.Stderr, "kc-env: "+a.t.S("msg_locked"))
+	fmt.Fprintln(os.Stderr, "se-env: "+a.t.S("msg_locked"))
 	return nil
 }
 

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Client side of a session (see agent.go). KC_ENV_SESSION holds only the
+// Client side of a session (see agent.go). SE_ENV_SESSION holds only the
 // session ID. It is not a secret: the agent decides who belongs to the
 // session by looking at the connecting process, not at what it sends.
 
@@ -109,7 +109,7 @@ func (a *app) activeSession() *session {
 		return a.sess
 	}
 	a.sessChecked = true
-	id := os.Getenv("KC_ENV_SESSION")
+	id := os.Getenv("SE_ENV_SESSION")
 	if !reSession.MatchString(id) {
 		return nil
 	}
