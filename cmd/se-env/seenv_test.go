@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"filippo.io/age"
 	"github.com/BurntSushi/toml"
@@ -113,7 +114,7 @@ func TestTemplatesRender(t *testing.T) {
 		"Sessions", "Vault", "Completion", "Shell", "Plugin", "Name", "Profile", "Key", "Cmd", "Path",
 		"Prompt", "Label", "Opt", "Value", "ID", "Start", "Expires", "Remaining", "Scope", "Cached",
 		"State", "Created", "Profiles", "Keys", "AtLeast", "Servers", "Phrase", "Seconds", "Paths", "Count", "Updated",
-		"Shown", "Real"} {
+		"Shown", "Real", "Chain", "Action", "Header", "Target", "Session"} {
 		data[k] = "X"
 	}
 	b := newBundle()
@@ -1092,5 +1093,113 @@ func TestPublicCopyNoFalseAlarm(t *testing.T) {
 	}
 	if got := alerts(a); got != "" {
 		t.Fatalf("false alarm: %q", got)
+	}
+}
+
+// The Touch ID dialog names who asks, what for and on what.
+func TestAuthReason(t *testing.T) {
+	a := testApp(t)
+	a.want(a.t.S("auth_target_key", "Profile", "work", "Key", "GITHUB_TOKEN"), a.t.S("auth_do_get"))
+	r := a.authReason(nil)
+	for _, want := range []string{
+		"use the se-env key:\nRequested by: ", " › se-env\n",
+		"Target: GITHUB_TOKEN in profile 'work'\n",
+		"Action: print the value (se-env get)\n",
+		"\n\nAuthenticate only if you expected this request",
+	} {
+		if !strings.Contains(r, want) {
+			t.Errorf("reason lacks %q:\n%s", want, r)
+		}
+	}
+	if strings.Contains(r, "session") {
+		t.Errorf("session line without a session:\n%s", r)
+	}
+	exp := time.Date(2026, 1, 2, 15, 4, 0, 0, time.Local)
+	s := &session{info: sessionInfo{Cmd: "claude", Pid: 42, Exp: exp.Unix()}}
+	if r := a.authReason(s); !strings.Contains(r, "After approval: the session of claude (PID 42) keeps this whole profile until 15:04") {
+		t.Errorf("session line missing:\n%s", r)
+	}
+
+	// macOS shows “age-plugin-se”で次の操作を実行しようとしています: <reason>
+	t.Setenv("SE_ENV_LANG", "ja")
+	j := appAt(a.home)
+	j.save("work", map[string]string{"SECRET_NAME": "v"})
+	j.want(j.t.S("auth_target_all", "Profile", "work"), j.t.S("auth_do_exec", "Cmd", commandText([]string{"gh", "repo", "list"})))
+	r = j.authReason(s)
+	if !strings.HasPrefix(r, "\n要求元: ") {
+		t.Errorf("ja reason must start on the line after the system's words:\n%s", r)
+	}
+	for _, want := range []string{
+		"\n要求元: ",
+		"\n対象: プロファイル「work」のすべてのキー\n",
+		"\n操作: 環境変数にしてコマンド「gh repo list」に渡す\n",
+		"\n許可後: claude (PID 42) のセッションが 15:04 までこのプロファイル全体を保持し、",
+		"使える\n\n実行するには認証してください",
+	} {
+		if !strings.Contains(r, want) {
+			t.Errorf("ja reason lacks %q:\n%s", want, r)
+		}
+	}
+	if strings.Contains(r, "SECRET_NAME") {
+		t.Errorf("exec lists key names:\n%s", r)
+	}
+}
+
+func TestAuthReasonIsBounded(t *testing.T) {
+	a := testApp(t)
+	a.want(strings.Repeat("鍵", maxReason), "")
+	r := a.authReason(nil)
+	if len(r) > maxReason || !utf8.ValidString(r) || !strings.HasSuffix(r, "…") {
+		t.Fatalf("reason not cut cleanly: %d bytes, valid %v", len(r), utf8.ValidString(r))
+	}
+}
+
+func TestCommandText(t *testing.T) {
+	if got := commandText([]string{"sh", "-c", "echo\nfake line"}); got != "sh -c echo?fake line" {
+		t.Errorf("control characters: %q", got)
+	}
+	if got := commandText([]string{strings.Repeat("x", 60)}); got != strings.Repeat("x", 40)+"…" {
+		t.Errorf("long command: %q", got)
+	}
+}
+
+func TestCallerChain(t *testing.T) {
+	c := callerChain(os.Getpid())
+	if !strings.HasSuffix(c, " › "+filepath.Base(os.Args[0])+" › se-env") {
+		t.Errorf("chain of the test process: %q", c)
+	}
+	if c := callerChain(0); c != "?" {
+		t.Errorf("no process: %q", c)
+	}
+	// A slice, not a map literal: gofmt versions align long map keys differently.
+	for _, c := range [][2]string{
+		{"/Applications/Ghostty.app/Contents/MacOS/ghostty", "Ghostty"},
+		{"/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper.app/Contents/MacOS/Code Helper", "Visual Studio Code"},
+		{"/Users/u/.local/bin/claude", "claude"},
+		{"/bin/zsh", "zsh"},
+	} {
+		if got := displayName(c[0]); got != c[1] {
+			t.Errorf("displayName(%q) = %q, want %q", c[0], got, c[1])
+		}
+	}
+}
+
+// The text is in the environment only while the plugin may be started, and
+// never reaches a command started by exec, even if the caller set it.
+func TestReasonStaysOutOfCommands(t *testing.T) {
+	a := testApp(t)
+	a.want("t", "a")
+	var during string
+	a.withReason(nil, func() error { during = os.Getenv(reasonEnv); return nil })
+	if !strings.Contains(during, "Action: a") || os.Getenv(reasonEnv) != "" {
+		t.Fatalf("during %q, after %q", during, os.Getenv(reasonEnv))
+	}
+	se(t, a, nil, "v", "set", "work", "K")
+	out, e, code := se(t, a, []string{reasonEnv + "=forged"}, "", "exec", "work", "--", "/usr/bin/env")
+	if code != 0 {
+		t.Fatalf("exec: %s", e)
+	}
+	if strings.Contains(out, reasonEnv) || !strings.Contains(out, "K=v") {
+		t.Fatalf("child environment:\n%s", out)
 	}
 }

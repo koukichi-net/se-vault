@@ -1,0 +1,60 @@
+diff --git a/Sources/Crypto.swift b/Sources/Crypto.swift
+index 059a5ef..da57ef8 100644
+--- a/Sources/Crypto.swift
++++ b/Sources/Crypto.swift
+@@ -78,7 +78,7 @@ protocol SecureEnclaveMLKEM768PrivateKey {
+ 
+ #if !os(Linux) && !os(Windows)
+   class CryptoKitCrypto: Crypto {
+-    let context = LAContext()
++    let context = seEnvAuthenticationContext()
+ 
+     var isSecureEnclaveAvailable: Bool {
+       return SecureEnclave.isAvailable
+@@ -183,3 +183,46 @@ protocol SecureEnclaveMLKEM768PrivateKey {
+   }
+ 
+ #endif
++
++#if !os(Linux) && !os(Windows)
++  // se-env: say in the Touch ID dialog who asks and what for.
++  //
++  // se-env puts that text in SE_ENV_AUTH_REASON when it starts this plugin.
++  // macOS shows it in the dialog: "“age-plugin-se” is trying to <text>."
++  // The text is used only when the parent process is the se-env program in
++  // the same directory as this plugin, so another program that starts the
++  // plugin itself cannot put its own words in the dialog. Otherwise the
++  // dialog is the system's default, as without this patch.
++  func seEnvAuthenticationContext() -> LAContext {
++    let context = LAContext()
++    if let reason = seEnvAuthReason() {
++      context.localizedReason = reason
++    }
++    return context
++  }
++
++  func seEnvAuthReason() -> String? {
++    guard let reason = ProcessInfo.processInfo.environment["SE_ENV_AUTH_REASON"],
++      !reason.isEmpty, reason.utf8.count <= 2000,
++      let me = seEnvExecutablePath(of: getpid()),
++      let parent = seEnvExecutablePath(of: getppid())
++    else {
++      return nil
++    }
++    let seEnv = URL(fileURLWithPath: me).deletingLastPathComponent()
++      .appendingPathComponent("se-env").resolvingSymlinksInPath().path
++    guard URL(fileURLWithPath: parent).resolvingSymlinksInPath().path == seEnv else {
++      return nil
++    }
++    return reason
++  }
++
++  // The file a process runs, as the kernel knows it (symlinks resolved).
++  func seEnvExecutablePath(of pid: pid_t) -> String? {
++    var buf = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))  // PROC_PIDPATHINFO_MAXSIZE
++    guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else {
++      return nil
++    }
++    return String(cString: buf)
++  }
++#endif

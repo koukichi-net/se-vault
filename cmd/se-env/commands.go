@@ -122,6 +122,7 @@ func (a *app) cmdLs(args []string) error {
 			return err
 		}
 		defer unlock()
+		a.want(a.t.S("auth_target_profile", "Profile", p), a.t.S("auth_do_verify"))
 		l, err := a.loadRaw(p, false, false)
 		if err != nil {
 			return err
@@ -160,6 +161,7 @@ func (a *app) cmdLs(args []string) error {
 		if err := a.requireInit(); err != nil {
 			return err
 		}
+		a.want(a.t.S("auth_target_names", "Profile", p), a.t.S("auth_do_ls"))
 		kv, _, err := a.loadProfile(p)
 		if err != nil {
 			return err
@@ -249,6 +251,11 @@ func (a *app) cmdSet(args []string) error {
 		return err
 	}
 	defer unlock()
+	if public {
+		a.want(a.t.S("auth_target_key", "Profile", p, "Key", k), a.t.S("auth_do_set_public"))
+	} else {
+		a.want(a.t.S("auth_target_key", "Profile", p, "Key", k), a.t.S("auth_do_set"))
+	}
 	kv, pub, err := a.loadProfile(p)
 	if err != nil {
 		return err
@@ -293,6 +300,7 @@ func (a *app) cmdGet(args []string) error {
 	if err != nil {
 		return err
 	}
+	a.want(a.t.S("auth_target_key", "Profile", p, "Key", k), a.t.S("auth_do_get"))
 	v, err := a.getValue(p, k)
 	if err != nil {
 		return err
@@ -325,6 +333,7 @@ func (a *app) cmdHeader(args []string) error {
 	if err != nil {
 		return err
 	}
+	a.want(a.t.S("auth_target_key", "Profile", p, "Key", k), a.t.S("auth_do_header", "Header", printable(name)))
 	v, err := a.getValue(p, k)
 	if err != nil {
 		return err
@@ -362,7 +371,7 @@ func (a *app) childEnv(extra map[string]string) []string {
 	var env []string
 	for _, e := range os.Environ() {
 		k, _, _ := strings.Cut(e, "=")
-		if k == "PATH" {
+		if k == "PATH" || k == reasonEnv {
 			continue
 		}
 		if _, override := extra[k]; override {
@@ -398,6 +407,7 @@ func (a *app) cmdExec(args []string) error {
 	if err := a.requireProfile(p); err != nil {
 		return err
 	}
+	a.want(a.t.S("auth_target_all", "Profile", p), a.t.S("auth_do_exec", "Cmd", commandText(args)))
 	kv, err := a.load(p)
 	if err != nil {
 		return err
@@ -443,6 +453,7 @@ func (a *app) cmdRm(args []string) error {
 		if err := a.confirm(a.t.S("confirm_rm_all", "Count", n, "Name", p)); err != nil {
 			return err
 		}
+		a.want(a.t.S("auth_target_all_count", "Profile", p, "Count", n), a.t.S("auth_do_rm"))
 		if err := a.presence(); err != nil {
 			return err
 		}
@@ -470,6 +481,7 @@ func (a *app) cmdRm(args []string) error {
 		return err
 	}
 	defer unlock()
+	a.want(a.t.S("auth_target_keys", "Profile", p, "Keys", strings.Join(keys, ", ")), a.t.S("auth_do_rm"))
 	kv, pub, err := a.loadFreshProfile(p, true) // Touch ID; refused key names stay removable
 	if err != nil {
 		return err
@@ -540,6 +552,7 @@ func (a *app) cmdRmProfile(args []string) error {
 		}
 		// The index is only a hint. Decrypt (Touch ID) to see that the
 		// profile really is empty before deleting it.
+		a.want(a.t.S("auth_target_empty_profile", "Profile", p), a.t.S("auth_do_rm_empty"))
 		kv, err := a.loadFresh(p, true)
 		if err != nil {
 			return err
@@ -556,6 +569,7 @@ func (a *app) cmdRmProfile(args []string) error {
 		if err := a.confirm(a.t.S("confirm_rm_profile_force", "Name", p, "Count", n)); err != nil {
 			return err
 		}
+		a.want(a.t.S("auth_target_profile", "Profile", p), a.t.S("auth_do_rm_profile", "Count", n))
 		if err := a.presence(); err != nil {
 			return err
 		}

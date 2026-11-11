@@ -215,6 +215,32 @@ confirm_rm_all = "プロファイル '{{.Name}}' のキー {{.Count}} 個をす�
 confirm_rm_empty_profile = "空のプロファイル '{{.Name}}' を削除しますか？"
 confirm_rm_profile_force = "プロファイル '{{.Name}}' と中のキー {{.Count}} 個を削除しますか？元に戻せません。"
 
+
+# ---- Touch ID のダイアログ（patches/age-plugin-se-reason.patch を当てた age-plugin-se が表示する） ----
+# 改行はそのまま出る。
+# 全体の雛形。macOS の表示は「“age-plugin-se”で次の操作を実行しようとしています: <本文>」。
+# 先頭の改行で、本文を次の行から始める。Session は空か、auth_reason_session の1行。
+auth_reason = "\n要求元: {{.Chain}}\n対象: {{.Target}}\n操作: {{.Action}}{{.Session}}\n\n実行するには認証してください"
+auth_reason_session = "許可後: {{.Cmd}} のセッションが {{.Expires}} までこのプロファイル全体を保持し、セッション内のプログラムは Touch ID なしで使える"
+auth_target_key = "プロファイル「{{.Profile}}」の {{.Key}}"
+auth_target_keys = "プロファイル「{{.Profile}}」の {{.Keys}}"
+auth_target_all = "プロファイル「{{.Profile}}」のすべてのキー"
+auth_target_all_count = "プロファイル「{{.Profile}}」のすべてのキー（{{.Count}} 個）"
+auth_target_names = "プロファイル「{{.Profile}}」のキー名"
+auth_target_profile = "プロファイル「{{.Profile}}」"
+auth_target_empty_profile = "空のプロファイル「{{.Profile}}」"
+auth_target_everything = "Secure Enclave の鍵と、すべてのプロファイル（{{.Profiles}} 個）"
+auth_do_get = "値を出力する（se-env get）"
+auth_do_header = "HTTP ヘッダー {{.Header}} として出力する（se-env header）"
+auth_do_exec = "環境変数にしてコマンド「{{.Cmd}}」に渡す"
+auth_do_set = "秘密の値として保存する（暗号化し直すため、いまの中身を読む）"
+auth_do_set_public = "公開値として保存する（暗号化し直すため、いまの中身を読む）"
+auth_do_ls = "一覧を作る（値は表示しない）"
+auth_do_verify = "中身を確かめ、公開値の写しと索引を作り直す（se-env ls --verify）"
+auth_do_rm = "削除する"
+auth_do_rm_empty = "空であることを確かめてから削除する"
+auth_do_rm_profile = "中のキー {{.Count}} 個ごと削除する"
+auth_do_destroy = "完全に削除する（se-env destroy）"
 # ---- 結果 ----
 msg_initialized = "初期化しました: {{.Home}}"
 msg_set = "保存しました: {{.Profile}}/{{.Key}}"

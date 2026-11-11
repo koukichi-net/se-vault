@@ -371,13 +371,18 @@ func (a *app) snapshot(p string) (ct, pubCopy []byte, err error) {
 	return ct, pubCopy, nil
 }
 
-// decrypt decrypts a profile's ciphertext with the Secure Enclave key (Touch ID).
-func (a *app) decrypt(ct []byte) ([]byte, error) {
+// decrypt decrypts a profile's ciphertext with the Secure Enclave key (Touch
+// ID). s is the session that will keep the result, or nil; the dialog says so.
+func (a *app) decrypt(ct []byte, s *session) ([]byte, error) {
 	id, err := a.identity()
 	if err != nil {
 		return nil, err
 	}
-	plain, err := decryptBytes(ct, id)
+	var plain []byte
+	err = a.withReason(s, func() (err error) {
+		plain, err = decryptBytes(ct, id)
+		return err
+	})
 	if err != nil {
 		return nil, a.fail("err_decrypt_failed")
 	}
@@ -430,7 +435,7 @@ func (a *app) loadRaw(p string, useSession, allowUnsafe bool) (*loaded, error) {
 				l.close()
 				return ld, err
 			}
-			plain, err := a.decrypt(ct)
+			plain, err := a.decrypt(ct, s)
 			if err != nil {
 				l.close()
 				return nil, err
@@ -444,7 +449,7 @@ func (a *app) loadRaw(p string, useSession, allowUnsafe bool) (*loaded, error) {
 	if err != nil {
 		return nil, err
 	}
-	plain, err := a.decrypt(ct)
+	plain, err := a.decrypt(ct, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -692,6 +697,10 @@ func (a *app) authPresence() bool {
 	if err != nil {
 		return false
 	}
-	got, err := decryptBytes(ct, id)
+	var got []byte
+	err = a.withReason(nil, func() (err error) {
+		got, err = decryptBytes(ct, id)
+		return err
+	})
 	return err == nil && bytes.Equal(got, challenge)
 }
