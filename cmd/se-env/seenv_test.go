@@ -1171,14 +1171,15 @@ func TestCallerChain(t *testing.T) {
 	if c := callerChain(0); c != "?" {
 		t.Errorf("no process: %q", c)
 	}
-	for exe, want := range map[string]string{
-		"/Applications/Ghostty.app/Contents/MacOS/ghostty":                                                    "Ghostty",
-		"/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper.app/Contents/MacOS/Code Helper": "Visual Studio Code",
-		"/Users/u/.local/bin/claude":                                                                          "claude",
-		"/bin/zsh":                                                                                            "zsh",
+	// A slice, not a map literal: gofmt versions align long map keys differently.
+	for _, c := range [][2]string{
+		{"/Applications/Ghostty.app/Contents/MacOS/ghostty", "Ghostty"},
+		{"/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper.app/Contents/MacOS/Code Helper", "Visual Studio Code"},
+		{"/Users/u/.local/bin/claude", "claude"},
+		{"/bin/zsh", "zsh"},
 	} {
-		if got := displayName(exe); got != want {
-			t.Errorf("displayName(%q) = %q, want %q", exe, got, want)
+		if got := displayName(c[0]); got != c[1] {
+			t.Errorf("displayName(%q) = %q, want %q", c[0], got, c[1])
 		}
 	}
 }
